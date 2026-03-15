@@ -29,6 +29,7 @@ sol! {
             uint256 minProfit;      // minimum profit in debt asset units
             bytes swapPath;         // multi-hop path (empty = single hop)
             address siloAddress;    // only for Silo liquidations
+            uint256 minAmountOut;   // minimum amount from swap (slippage protection)
         }
 
         /// Execute a liquidation using an AAVE v3 flash loan
@@ -146,6 +147,9 @@ pub fn build_liquidation_params(
     let fee = select_swap_fee(opportunity.collateral_asset, opportunity.debt_asset);
     let path = build_swap_path(opportunity.collateral_asset, opportunity.debt_asset);
 
+    // 2% max slippage: minAmountOut = debtToCover * 98 / 100
+    let min_amount_out = opportunity.debt_to_cover * U256::from(98) / U256::from(100);
+
     IFlashLiquidator::LiquidationParams {
         protocol: proto,
         collateralAsset: opportunity.collateral_asset,
@@ -157,6 +161,7 @@ pub fn build_liquidation_params(
         minProfit: min_profit,
         swapPath: path,
         siloAddress: Address::ZERO,
+        minAmountOut: min_amount_out,
     }
 }
 

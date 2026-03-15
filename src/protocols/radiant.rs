@@ -1,10 +1,12 @@
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::Provider;
+use alloy::rpc::types::Filter;
 use alloy::sol;
 use eyre::{Context, Result};
 use tracing::{debug, info, warn};
 
 use crate::protocols::{LiquidationOpportunity, Protocol};
+use crate::provider;
 use crate::state::position_tracker::PositionTracker;
 use crate::utils::multicall::Multicall;
 
@@ -111,16 +113,19 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     }
 
     /// Batch-query health factors for tracked borrowers using Multicall3.
+    ///
+    /// Returns (user_address, health_factor, total_debt_eth) tuples.
+    /// `total_debt_eth` is in ETH (18 decimals) for Radiant (AAVE v2 fork).
     async fn batch_query_health_factors(
         &self,
         users: &[Address],
-    ) -> Result<Vec<(Address, U256)>> {
+    ) -> Result<Vec<(Address, U256, U256)>> {
         if users.is_empty() {
             return Ok(Vec::new());
         }
 
         let multicall = Multicall::new(&self.provider);
-        let mut results: Vec<(Address, U256)> = Vec::with_capacity(users.len());
+        let mut results: Vec<(Address, U256, U256)> = Vec::with_capacity(users.len());
 
         for chunk in users.chunks(self.multicall_batch_size) {
             let calls: Vec<_> = chunk
@@ -143,7 +148,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                             &raw.return_data,
                         )
                     {
-                        results.push((chunk[i], decoded.healthFactor));
+                        results.push((chunk[i], decoded.healthFactor, decoded.totalDebtETH));
                     } else {
                         warn!(
                             user = %chunk[i],
@@ -164,6 +169,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         &self,
         user: Address,
         health_factor: U256,
+        total_debt_eth: U256,
     ) -> Result<Option<LiquidationOpportunity>> {
         let reserves = self.fetch_reserves_list().await?;
         let data_provider =
@@ -217,15 +223,17 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         }
 
         // Radiant (AAVE v2 fork) close factor is 50%.
+        let close_factor = 0.5;
         let debt_to_cover = max_debt / U256::from(2);
 
-        // Rough profit estimate based on typical liquidation bonus (~5%).
+        // Profit estimate using totalDebtETH from getUserAccountData.
+        // totalDebtETH is denominated in ETH (18 decimals). Convert to USD
+        // using a rough ETH price estimate (~$3000).
         let estimated_bonus_bps: f64 = 500.0;
-        let debt_as_f64 = debt_to_cover
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or(0.0);
-        let estimated_profit_usd = debt_as_f64 * (estimated_bonus_bps / 10_000.0);
+        let debt_eth = total_debt_eth.to::<u128>() as f64 / 1e18;
+        let eth_price_usd = 3000.0; // rough estimate; a production bot would use an oracle
+        let debt_usd = debt_eth * eth_price_usd;
+        let estimated_profit_usd = debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
 
         if estimated_profit_usd < self.min_profit_usd {
             debug!(
@@ -246,6 +254,54 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             expected_profit_usd: estimated_profit_usd,
             health_factor,
         }))
+    }
+
+    /// Discover borrowers by scanning recent Borrow events from the Radiant pool.
+    async fn discover_borrowers_from_events(&self) -> Result<()> {
+        // Radiant (AAVE v2 fork) Borrow event topic0:
+        // Borrow(address,address,address,uint256,uint256,uint256,uint16)
+        // Same topic hash as AAVE v2's Borrow event.
+        let borrow_topic: FixedBytes<32> = "0xc6a898309e823ee50bac64e45ca8adba6690e99e7841c45d754e2a38e9019d9b"
+            .parse()
+            .wrap_err("Invalid Radiant borrow event topic")?;
+
+        let latest = provider::get_latest_block_number(&self.provider).await?;
+        let from_block = latest.saturating_sub(50_000);
+
+        info!(
+            protocol = "radiant",
+            from_block,
+            to_block = latest,
+            "Scanning for Borrow events to discover borrowers"
+        );
+
+        let filter = Filter::new()
+            .address(self.pool_address)
+            .event_signature(borrow_topic)
+            .from_block(from_block)
+            .to_block(latest);
+
+        let logs = self.provider.get_logs(&filter).await
+            .wrap_err("Failed to fetch Radiant Borrow event logs")?;
+
+        let mut count = 0usize;
+        for log in &logs {
+            // topic[2] is the `onBehalfOf` address (the actual borrower).
+            if log.topics().len() >= 3 {
+                let borrower = Address::from_word(log.topics()[2]);
+                self.position_tracker.add_borrower(borrower);
+                count += 1;
+            }
+        }
+
+        info!(
+            protocol = "radiant",
+            events = logs.len(),
+            unique_borrowers = self.position_tracker.borrower_count(),
+            "Radiant borrower discovery complete (added {} entries)", count
+        );
+
+        Ok(())
     }
 }
 
@@ -280,7 +336,7 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
         let health_factors = self.batch_query_health_factors(&borrowers).await?;
 
         let mut opportunities = Vec::new();
-        for (user, hf) in health_factors {
+        for (user, hf, total_debt_eth) in health_factors {
             self.position_tracker.update_health_factor(user, hf);
 
             if hf < threshold && hf > U256::ZERO {
@@ -291,7 +347,7 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
                     "Liquidatable Radiant position found"
                 );
 
-                match self.build_opportunity(user, hf).await {
+                match self.build_opportunity(user, hf, total_debt_eth).await {
                     Ok(Some(opp)) => opportunities.push(opp),
                     Ok(None) => {}
                     Err(e) => {
@@ -314,5 +370,9 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
         );
 
         Ok(opportunities)
+    }
+
+    async fn discover_borrowers(&self) -> Result<()> {
+        self.discover_borrowers_from_events().await
     }
 }

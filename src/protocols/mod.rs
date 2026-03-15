@@ -40,4 +40,13 @@ pub trait Protocol: Send + Sync {
         &self,
         block_number: u64,
     ) -> impl std::future::Future<Output = Result<Vec<LiquidationOpportunity>>> + Send;
+
+    /// Discover borrowers by scanning recent on-chain events (e.g. Borrow events).
+    ///
+    /// Called once at startup and can be called periodically to refresh the
+    /// borrower list. Implementations should add discovered addresses to their
+    /// internal position tracker.
+    fn discover_borrowers(
+        &self,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
 }

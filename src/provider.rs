@@ -1,6 +1,24 @@
+use alloy::network::{Ethereum, EthereumWallet};
+use alloy::providers::fillers::{
+    BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
+};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider, WsConnect};
 use eyre::{Context, Result};
 use tracing::info;
+
+/// Concrete type for a signed HTTP provider (with wallet filler).
+/// This is the type returned by `ProviderBuilder::new().wallet(w).connect_http(url)`.
+pub type SignedHttpProvider = FillProvider<
+    JoinFill<
+        JoinFill<
+            alloy::providers::Identity,
+            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        >,
+        WalletFiller<EthereumWallet>,
+    >,
+    RootProvider,
+    Ethereum,
+>;
 
 /// Create a WebSocket provider connected to the given URL.
 ///
@@ -29,14 +47,19 @@ pub fn create_http_provider(http_url: &str) -> Result<RootProvider> {
     Ok(provider)
 }
 
-/// Create a dedicated HTTP provider for the Arbitrum Sequencer endpoint.
+/// Create an HTTP provider with a wallet signer attached.
 ///
-/// Uses a persistent HTTP connection (via reqwest's connection pooling) to
-/// minimize TLS handshake overhead on repeated transaction submissions.
-pub fn create_sequencer_provider(rpc_url: &str) -> Result<RootProvider> {
-    info!(url = rpc_url, "Creating Sequencer RPC provider (persistent connection)");
-    let url = rpc_url.parse().wrap_err("Invalid Sequencer RPC URL")?;
-    let provider = ProviderBuilder::default().connect_http(url);
+/// This provider can send signed transactions. Used for the execution provider
+/// that submits liquidation transactions to the sequencer.
+pub fn create_signed_http_provider(
+    http_url: &str,
+    wallet: EthereumWallet,
+) -> Result<SignedHttpProvider> {
+    info!(url = http_url, "Creating signed HTTP provider");
+    let url = http_url.parse().wrap_err("Invalid HTTP RPC URL for signed provider")?;
+    let provider = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_http(url);
     Ok(provider)
 }
 

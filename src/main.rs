@@ -8,14 +8,17 @@ mod utils;
 mod web;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alloy::primitives::Address;
 use alloy::providers::Provider;
+use alloy::signers::local::PrivateKeySigner;
+use alloy::network::EthereumWallet;
 use eyre::{Context, Result};
 use futures::StreamExt;
 use tokio::signal;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 use tracing::{error, info, warn};
 
 use crate::config::AppConfig;
@@ -102,12 +105,32 @@ async fn main() -> Result<()> {
         "Configuration loaded"
     );
 
-    // Connect to the WebSocket RPC endpoint
-    let ws_provider = provider::create_ws_provider(&config.rpc.ws_url).await?;
-    let http_provider = provider::create_http_provider(&config.rpc.http_url)?;
+    // --- Wallet setup ---
+    // Resolve the private key from environment and create a signer.
+    let private_key_hex = config.resolve_private_key()?;
+    let signer: PrivateKeySigner = private_key_hex
+        .parse()
+        .wrap_err("Failed to parse private key into signer")?;
+    let wallet_address = signer.address();
+    let wallet = EthereumWallet::from(signer);
+    info!(wallet = %wallet_address, "Wallet loaded");
 
-    let block_number = provider::get_latest_block_number(&http_provider).await?;
+    // --- Providers ---
+    // Read-only provider for monitoring (unsigned, fast RPC)
+    let ws_provider = provider::create_ws_provider(&config.rpc.ws_url).await?;
+    let read_provider = provider::create_http_provider(&config.rpc.http_url)?;
+
+    // Execution provider (signed with wallet, points to sequencer for lowest latency)
+    let exec_provider = provider::create_signed_http_provider(
+        &config.sequencer.rpc_url,
+        wallet,
+    )?;
+
+    let block_number = provider::get_latest_block_number(&read_provider).await?;
     info!(block_number, "Connected to Arbitrum");
+
+    // Shared latest block number, updated by the main loop, read by protocol monitors.
+    let latest_block = Arc::new(AtomicU64::new(block_number));
 
     // Parse contract addresses
     let flash_liquidator_address: Address = config
@@ -120,16 +143,21 @@ async fn main() -> Result<()> {
     let metrics = Metrics::new();
 
     // Initialize the liquidator orchestrator
+    // read_provider is used for simulation; exec_provider for sending transactions.
     let liquidator = Arc::new(Liquidator::new(
-        http_provider.clone(),
+        read_provider.clone(),
+        exec_provider,
         config.execution.clone(),
         flash_liquidator_address,
+        wallet_address,
         metrics.clone(),
-        &config.sequencer.rpc_url,
     ));
 
     // Shutdown signal channel
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
+
+    // Notify used by sequencer feed to trigger protocol rescans
+    let rescan_notify = Arc::new(Notify::new());
 
     // Spawn protocol monitors
     let mut protocol_handles = Vec::new();
@@ -144,7 +172,7 @@ async fn main() -> Result<()> {
                 .wrap_err("Invalid AAVE v3 data_provider address")?;
 
             let protocol = AaveV3Protocol::new(
-                http_provider.clone(),
+                read_provider.clone(),
                 pool,
                 data_provider,
                 aave_config.min_profit_usd,
@@ -154,10 +182,19 @@ async fn main() -> Result<()> {
             let liquidator = liquidator.clone();
             let metrics = metrics.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
+            let latest_block = latest_block.clone();
+            let rescan_notify = rescan_notify.clone();
 
             let handle = tokio::spawn(async move {
                 info!("AAVE v3 monitor started");
-                run_protocol_monitor(protocol, liquidator, metrics, &mut shutdown_rx).await;
+                run_protocol_monitor(
+                    protocol,
+                    liquidator,
+                    metrics,
+                    &mut shutdown_rx,
+                    latest_block,
+                    rescan_notify,
+                ).await;
                 info!("AAVE v3 monitor stopped");
             });
             protocol_handles.push(handle);
@@ -174,7 +211,7 @@ async fn main() -> Result<()> {
                 .wrap_err("Invalid Radiant data_provider address")?;
 
             let protocol = RadiantProtocol::new(
-                http_provider.clone(),
+                read_provider.clone(),
                 pool,
                 data_provider,
                 radiant_config.min_profit_usd,
@@ -184,10 +221,19 @@ async fn main() -> Result<()> {
             let liquidator = liquidator.clone();
             let metrics = metrics.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
+            let latest_block = latest_block.clone();
+            let rescan_notify = rescan_notify.clone();
 
             let handle = tokio::spawn(async move {
                 info!("Radiant monitor started");
-                run_protocol_monitor(protocol, liquidator, metrics, &mut shutdown_rx).await;
+                run_protocol_monitor(
+                    protocol,
+                    liquidator,
+                    metrics,
+                    &mut shutdown_rx,
+                    latest_block,
+                    rescan_notify,
+                ).await;
                 info!("Radiant monitor stopped");
             });
             protocol_handles.push(handle);
@@ -204,7 +250,7 @@ async fn main() -> Result<()> {
                 .wrap_err("Invalid Silo repository address")?;
 
             let protocol = SiloProtocol::new(
-                http_provider.clone(),
+                read_provider.clone(),
                 lens,
                 repository,
                 silo_config.min_profit_usd,
@@ -213,10 +259,19 @@ async fn main() -> Result<()> {
             let liquidator = liquidator.clone();
             let metrics = metrics.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
+            let latest_block = latest_block.clone();
+            let rescan_notify = rescan_notify.clone();
 
             let handle = tokio::spawn(async move {
                 info!("Silo monitor started");
-                run_protocol_monitor(protocol, liquidator, metrics, &mut shutdown_rx).await;
+                run_protocol_monitor(
+                    protocol,
+                    liquidator,
+                    metrics,
+                    &mut shutdown_rx,
+                    latest_block,
+                    rescan_notify,
+                ).await;
                 info!("Silo monitor stopped");
             });
             protocol_handles.push(handle);
@@ -263,13 +318,16 @@ async fn main() -> Result<()> {
             Some(block) = block_stream.next() => {
                 let block_num = block.inner.number;
                 info!(block = block_num, "New block received");
+                // Update shared latest block number for protocol monitors
+                latest_block.store(block_num, Ordering::Release);
                 metrics.record_block_processed();
             }
             // Sequencer feed event - fastest signal for new transactions
             Some(event) = feed_rx.recv() => {
-                // Sequencer feed event received - a new transaction was sequenced
-                // This is our fastest signal to re-check positions
+                // Sequencer feed event received - a new transaction was sequenced.
+                // Notify protocol monitors to trigger an immediate rescan.
                 let _ = event;
+                rescan_notify.notify_waiters();
                 metrics.record_block_processed();
             }
             // Periodic metrics logging
@@ -299,18 +357,31 @@ async fn main() -> Result<()> {
 }
 
 /// Run a protocol monitor loop that scans for liquidation opportunities
-/// each time it is triggered.
+/// each time it is triggered by timer, sequencer feed notification, or both.
 ///
 /// Listens for the shutdown signal to terminate gracefully.
-async fn run_protocol_monitor<Proto, P>(
+async fn run_protocol_monitor<Proto, R, E>(
     protocol: Proto,
-    liquidator: Arc<Liquidator<P>>,
+    liquidator: Arc<Liquidator<R, E>>,
     metrics: Metrics,
     shutdown_rx: &mut broadcast::Receiver<()>,
+    latest_block: Arc<AtomicU64>,
+    rescan_notify: Arc<Notify>,
 ) where
     Proto: Protocol,
-    P: Provider + Clone + Send + Sync,
+    R: Provider + Clone + Send + Sync,
+    E: Provider + Clone + Send + Sync,
 {
+    // Run initial borrower discovery before entering the scan loop (Fix 6).
+    info!(protocol = protocol.name(), "Running initial borrower discovery");
+    if let Err(e) = protocol.discover_borrowers().await {
+        warn!(
+            protocol = protocol.name(),
+            error = %e,
+            "Initial borrower discovery failed; will retry on next scan"
+        );
+    }
+
     // Scan interval: Arbitrum has ~250ms blocks, so we scan every few seconds
     // to avoid overwhelming the RPC.
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -318,8 +389,8 @@ async fn run_protocol_monitor<Proto, P>(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                // Get the latest block for the scan
-                let block_number = 0u64; // Placeholder; in production, read from shared state
+                // Read latest block from shared state (Fix 5)
+                let block_number = latest_block.load(Ordering::Acquire);
 
                 match protocol.get_liquidatable_positions(block_number).await {
                     Ok(opportunities) => {
@@ -348,6 +419,42 @@ async fn run_protocol_monitor<Proto, P>(
                             protocol = protocol.name(),
                             error = %e,
                             "Error scanning for liquidatable positions"
+                        );
+                        metrics.record_error();
+                    }
+                }
+            }
+            // Sequencer feed triggered a rescan (Fix 7)
+            _ = rescan_notify.notified() => {
+                let block_number = latest_block.load(Ordering::Acquire);
+
+                match protocol.get_liquidatable_positions(block_number).await {
+                    Ok(opportunities) => {
+                        let count = opportunities.len();
+                        metrics.record_positions_scanned(count as u64);
+
+                        if !opportunities.is_empty() {
+                            info!(
+                                protocol = protocol.name(),
+                                count,
+                                "Found liquidation opportunities (sequencer trigger)"
+                            );
+
+                            if let Err(e) = liquidator.process_batch(opportunities).await {
+                                error!(
+                                    protocol = protocol.name(),
+                                    error = %e,
+                                    "Error processing liquidation batch"
+                                );
+                                metrics.record_error();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            protocol = protocol.name(),
+                            error = %e,
+                            "Error scanning for liquidatable positions (sequencer trigger)"
                         );
                         metrics.record_error();
                     }

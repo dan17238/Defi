@@ -28,11 +28,14 @@ pub struct SimulationResult {
 /// Simulates liquidation transactions using a local revm fork of the chain state.
 pub struct Simulator<P> {
     provider: P,
+    /// The wallet address (EOA) that owns the flash liquidator contract.
+    /// Used as the `caller` in simulation so that `onlyOwner` checks pass.
+    wallet_address: Address,
 }
 
 impl<P: Provider + Clone + Send + Sync> Simulator<P> {
-    pub fn new(provider: P) -> Self {
-        Self { provider }
+    pub fn new(provider: P, wallet_address: Address) -> Self {
+        Self { provider, wallet_address }
     }
 
     /// Simulate a flash-loan-based liquidation against the current on-chain state.
@@ -70,7 +73,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         type SimDB<P> = CacheDB<WrapDatabaseAsync<AlloyDB<alloy::network::Ethereum, P>>>;
 
         let tx = revm::context::TxEnv::builder()
-            .caller(flash_liquidator)
+            .caller(self.wallet_address)
             .kind(TxKind::Call(flash_liquidator))
             .data(calldata.clone())
             .gas_limit(3_000_000)
@@ -104,7 +107,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         // Execute the transaction via transact().
         // transact() takes the Tx (TxEnv) and returns ExecResultAndState.
         let tx_for_exec = revm::context::TxEnv::builder()
-            .caller(flash_liquidator)
+            .caller(self.wallet_address)
             .kind(TxKind::Call(flash_liquidator))
             .data(calldata)
             .gas_limit(3_000_000)

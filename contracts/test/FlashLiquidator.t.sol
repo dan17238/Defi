@@ -73,10 +73,28 @@ contract FlashLiquidatorTest is Test {
     //                        OWNERSHIP TESTS
     // =========================================================================
 
-    function test_transferOwnership() public {
+    function test_transferOwnership_twoStep() public {
+        address newOwner = makeAddr("newOwner");
+
+        // Step 1: initiate transfer (owner stays the same)
+        liquidator.transferOwnership(newOwner);
+        assertEq(liquidator.owner(), deployer);
+        assertEq(liquidator.pendingOwner(), newOwner);
+
+        // Step 2: new owner accepts
+        vm.prank(newOwner);
+        liquidator.acceptOwnership();
+        assertEq(liquidator.owner(), newOwner);
+        assertEq(liquidator.pendingOwner(), address(0));
+    }
+
+    function test_acceptOwnership_revertsForNonPendingOwner() public {
         address newOwner = makeAddr("newOwner");
         liquidator.transferOwnership(newOwner);
-        assertEq(liquidator.owner(), newOwner);
+
+        vm.prank(attacker);
+        vm.expectRevert(FlashLiquidator.OnlyOwner.selector);
+        liquidator.acceptOwnership();
     }
 
     function test_transferOwnership_revertsForNonOwner() public {
@@ -247,15 +265,16 @@ contract FlashLiquidatorTest is Test {
     //                    PROTOCOL VALIDATION TESTS
     // =========================================================================
 
-    function test_siloFlashLoan_revertsIfNotSiloProtocol() public {
+    function test_siloFlashLoan_revertsNotYetSupported() public {
         FlashLiquidator.LiquidationParams memory params;
-        params.protocol = FlashLiquidator.Protocol.AaveV3; // wrong protocol
+        params.protocol = FlashLiquidator.Protocol.Silo;
         params.debtAsset = address(mockUSDC);
         params.collateralAsset = address(mockWETH);
         params.user = user;
         params.debtToCover = 1000e6;
+        params.siloAddress = makeAddr("silo");
 
-        vm.expectRevert(FlashLiquidator.InvalidProtocol.selector);
+        vm.expectRevert("Silo not yet supported");
         liquidator.liquidateSiloWithAaveFlashLoan(params);
     }
 

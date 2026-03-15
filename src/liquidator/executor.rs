@@ -1,5 +1,5 @@
 use alloy::primitives::{Address, Bytes, FixedBytes};
-use alloy::providers::{Provider, RootProvider};
+use alloy::providers::Provider;
 use eyre::{Context, Result};
 use tracing::{debug, info};
 
@@ -7,23 +7,18 @@ use crate::utils::metrics::Metrics;
 
 /// Submits liquidation transactions on-chain and waits for confirmation.
 ///
-/// Uses two providers:
-/// - `provider`: for gas estimation and reads (via local node or general RPC)
-/// - `sequencer_provider`: dedicated persistent connection to the Arbitrum
-///   Sequencer for lowest-latency transaction submission
+/// The provider must have a wallet signer attached so that transactions are
+/// signed before submission. It should point to the sequencer RPC for
+/// lowest-latency transaction submission.
 pub struct Executor<P> {
     provider: P,
-    sequencer_provider: RootProvider,
     metrics: Metrics,
 }
 
 impl<P: Provider + Clone + Send + Sync> Executor<P> {
-    pub fn new(provider: P, sequencer_rpc_url: &str, metrics: Metrics) -> Self {
-        let sequencer_provider = crate::provider::create_sequencer_provider(sequencer_rpc_url)
-            .expect("Failed to create sequencer provider");
+    pub fn new(provider: P, metrics: Metrics) -> Self {
         Self {
             provider,
-            sequencer_provider,
             metrics,
         }
     }
@@ -67,13 +62,12 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
             .input(alloy::rpc::types::TransactionInput::new(calldata))
             .gas_price(gas_price);
 
-        // Send the transaction via the sequencer provider for lowest latency.
-        // The sequencer provider maintains a persistent HTTP connection to
-        // arb1-sequencer.arbitrum.io, eliminating TLS handshake overhead.
+        // Send the signed transaction via the provider (which has a wallet attached
+        // and points to the sequencer RPC for lowest latency).
         let send_start = std::time::Instant::now();
 
         let pending = self
-            .sequencer_provider
+            .provider
             .send_transaction(tx_request)
             .await
             .wrap_err("Failed to send liquidation transaction to sequencer")?;

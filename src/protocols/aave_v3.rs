@@ -1,10 +1,12 @@
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::Provider;
+use alloy::rpc::types::Filter;
 use alloy::sol;
 use eyre::{Context, Result};
 use tracing::{debug, info, warn};
 
 use crate::protocols::{LiquidationOpportunity, Protocol};
+use crate::provider;
 use crate::state::position_tracker::PositionTracker;
 use crate::utils::multicall::Multicall;
 
@@ -52,8 +54,8 @@ sol! {
                 uint256 scaledVariableDebt,
                 uint256 stableBorrowRate,
                 uint256 liquidityRate,
-                bool usageAsCollateralEnabled,
-                uint40 stableRateModeTimestamp
+                uint40 stableRateLastUpdated,
+                bool usageAsCollateralEnabled
             );
 
         struct TokenData {
@@ -113,17 +115,18 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
 
     /// Batch-query health factors for a list of users using Multicall3.
     ///
-    /// Returns (user_address, health_factor) pairs.
+    /// Returns (user_address, health_factor, total_debt_base) tuples.
+    /// `total_debt_base` is in the protocol's base currency (USD, 8 decimals).
     async fn batch_query_health_factors(
         &self,
         users: &[Address],
-    ) -> Result<Vec<(Address, U256)>> {
+    ) -> Result<Vec<(Address, U256, U256)>> {
         if users.is_empty() {
             return Ok(Vec::new());
         }
 
         let multicall = Multicall::new(&self.provider);
-        let mut results: Vec<(Address, U256)> = Vec::with_capacity(users.len());
+        let mut results: Vec<(Address, U256, U256)> = Vec::with_capacity(users.len());
 
         // Process in batches to avoid gas limits on the multicall
         for chunk in users.chunks(self.multicall_batch_size) {
@@ -142,7 +145,7 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
                     if let Ok(decoded) =
                         <IPool::getUserAccountDataCall as alloy::sol_types::SolCall>::abi_decode_returns(&raw.return_data)
                     {
-                        results.push((chunk[i], decoded.healthFactor));
+                        results.push((chunk[i], decoded.healthFactor, decoded.totalDebtBase));
                     } else {
                         warn!(
                             user = %chunk[i],
@@ -164,6 +167,7 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
         &self,
         user: Address,
         health_factor: U256,
+        total_debt_base: U256,
     ) -> Result<Option<LiquidationOpportunity>> {
         let reserves = self.fetch_reserves_list().await?;
         let data_provider = IPoolDataProvider::new(self.data_provider_address, &self.provider);
@@ -221,20 +225,22 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
         // AAVE v3 allows liquidating up to 50% of the debt (close factor = 0.5).
         // When health factor < 0.95e18, the close factor becomes 100%.
         let close_factor_threshold = U256::from(950_000_000_000_000_000u64); // 0.95e18
+        let close_factor = if health_factor < close_factor_threshold {
+            1.0
+        } else {
+            0.5
+        };
         let debt_to_cover = if health_factor < close_factor_threshold {
             max_debt
         } else {
             max_debt / U256::from(2)
         };
 
-        // Rough profit estimate: liquidation bonus is typically 5-10% of collateral received.
-        // A proper implementation would use oracle prices from the protocol.
+        // Profit estimate using totalDebtBase from getUserAccountData.
+        // totalDebtBase is already denominated in the protocol's base currency (USD, 8 decimals).
         let estimated_bonus_bps: f64 = 500.0; // 5% placeholder
-        let debt_as_f64 = debt_to_cover
-            .to_string()
-            .parse::<f64>()
-            .unwrap_or(0.0);
-        let estimated_profit_usd = debt_as_f64 * (estimated_bonus_bps / 10_000.0);
+        let debt_base_usd = total_debt_base.to::<u128>() as f64 / 1e8;
+        let estimated_profit_usd = debt_base_usd * close_factor * (estimated_bonus_bps / 10_000.0);
 
         if estimated_profit_usd < self.min_profit_usd {
             debug!(
@@ -255,6 +261,58 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
             expected_profit_usd: estimated_profit_usd,
             health_factor,
         }))
+    }
+
+    /// Discover borrowers by scanning recent Borrow events from the pool.
+    ///
+    /// Queries `eth_getLogs` for Borrow events over the last `scan_blocks` blocks
+    /// and registers the borrower addresses in the position tracker.
+    async fn discover_borrowers_from_events(&self) -> Result<()> {
+        // AAVE v3 Borrow event topic0:
+        // Borrow(address,address,address,uint256,uint8,uint256,uint16)
+        // = 0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0
+        let borrow_topic: FixedBytes<32> = "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
+            .parse()
+            .wrap_err("Invalid borrow event topic")?;
+
+        // Scan the last 50,000 blocks (~3.5 hours on Arbitrum at ~250ms blocks)
+        let latest = provider::get_latest_block_number(&self.provider).await?;
+        let from_block = latest.saturating_sub(50_000);
+
+        info!(
+            protocol = "aave_v3",
+            from_block,
+            to_block = latest,
+            "Scanning for Borrow events to discover borrowers"
+        );
+
+        let filter = Filter::new()
+            .address(self.pool_address)
+            .event_signature(borrow_topic)
+            .from_block(from_block)
+            .to_block(latest);
+
+        let logs = self.provider.get_logs(&filter).await
+            .wrap_err("Failed to fetch AAVE v3 Borrow event logs")?;
+
+        let mut count = 0usize;
+        for log in &logs {
+            // In the Borrow event, topic[2] is the `onBehalfOf` address (the actual borrower).
+            if log.topics().len() >= 3 {
+                let borrower = Address::from_word(log.topics()[2]);
+                self.position_tracker.add_borrower(borrower);
+                count += 1;
+            }
+        }
+
+        info!(
+            protocol = "aave_v3",
+            events = logs.len(),
+            unique_borrowers = self.position_tracker.borrower_count(),
+            "Borrower discovery complete (added {} entries)", count
+        );
+
+        Ok(())
     }
 }
 
@@ -291,7 +349,7 @@ impl<P: Provider + Clone + Send + Sync> Protocol for AaveV3Protocol<P> {
         let health_factors = self.batch_query_health_factors(&borrowers).await?;
 
         let mut opportunities = Vec::new();
-        for (user, hf) in health_factors {
+        for (user, hf, total_debt_base) in health_factors {
             self.position_tracker.update_health_factor(user, hf);
 
             if hf < threshold && hf > U256::ZERO {
@@ -302,7 +360,7 @@ impl<P: Provider + Clone + Send + Sync> Protocol for AaveV3Protocol<P> {
                     "Liquidatable position found"
                 );
 
-                match self.build_opportunity(user, hf).await {
+                match self.build_opportunity(user, hf, total_debt_base).await {
                     Ok(Some(opp)) => opportunities.push(opp),
                     Ok(None) => {}
                     Err(e) => {
@@ -325,5 +383,9 @@ impl<P: Provider + Clone + Send + Sync> Protocol for AaveV3Protocol<P> {
         );
 
         Ok(opportunities)
+    }
+
+    async fn discover_borrowers(&self) -> Result<()> {
+        self.discover_borrowers_from_events().await
     }
 }

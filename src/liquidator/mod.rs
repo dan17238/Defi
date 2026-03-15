@@ -2,7 +2,7 @@ pub mod executor;
 pub mod flash_loan;
 pub mod simulator;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use eyre::Result;
 use tracing::{error, info, warn};
@@ -18,25 +18,34 @@ use self::simulator::Simulator;
 ///
 /// Receives liquidation opportunities from protocol monitors, simulates them
 /// via revm, and if profitable, submits the on-chain transaction.
-pub struct Liquidator<P> {
-    simulator: Simulator<P>,
-    executor: Executor<P>,
+///
+/// Generic over two provider types:
+/// - `R`: read-only provider for simulation (unsigned, points to fast RPC)
+/// - `E`: execution provider for sending transactions (signed with wallet, points to sequencer)
+pub struct Liquidator<R, E> {
+    simulator: Simulator<R>,
+    executor: Executor<E>,
     config: ExecutionConfig,
     metrics: Metrics,
     flash_liquidator_address: Address,
 }
 
-impl<P: Provider + Clone + Send + Sync> Liquidator<P> {
+impl<R, E> Liquidator<R, E>
+where
+    R: Provider + Clone + Send + Sync,
+    E: Provider + Clone + Send + Sync,
+{
     pub fn new(
-        provider: P,
+        read_provider: R,
+        exec_provider: E,
         config: ExecutionConfig,
         flash_liquidator_address: Address,
+        wallet_address: Address,
         metrics: Metrics,
-        sequencer_rpc_url: &str,
     ) -> Self {
         Self {
-            simulator: Simulator::new(provider.clone()),
-            executor: Executor::new(provider, sequencer_rpc_url, metrics.clone()),
+            simulator: Simulator::new(read_provider, wallet_address),
+            executor: Executor::new(exec_provider, metrics.clone()),
             config,
             metrics,
             flash_liquidator_address,
@@ -123,11 +132,16 @@ impl<P: Provider + Clone + Send + Sync> Liquidator<P> {
         }
 
         // Build and send the transaction
-        // min_profit is set to 0 for now — the simulation already verified profitability
+        // Set minProfit to cover at least the flash loan premium (0.05% of debt)
+        // plus a safety margin (2x premium), so the on-chain contract reverts
+        // rather than executing an unprofitable liquidation.
+        let flash_loan_premium = opportunity.debt_to_cover * U256::from(5) / U256::from(10000); // 0.05%
+        let min_profit = flash_loan_premium * U256::from(2); // 2x premium as safety margin
+
         let calldata = flash_loan::encode_flash_liquidation(
             opportunity,
             self.flash_liquidator_address,
-            alloy::primitives::U256::ZERO,
+            min_profit,
         );
 
         match self

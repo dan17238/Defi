@@ -135,4 +135,10 @@ impl<P: Provider + Clone + Send + Sync> Protocol for SiloProtocol<P> {
 
         Ok(Vec::new())
     }
+
+    async fn discover_borrowers(&self) -> Result<()> {
+        // Phase 4 TODO: scan Silo Borrow events
+        debug!(protocol = self.name(), "Silo borrower discovery not yet implemented");
+        Ok(())
+    }
 }

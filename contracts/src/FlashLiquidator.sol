@@ -58,6 +58,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
         uint256 minProfit; // Minimum profit required (in debt asset units)
         bytes swapPath; // Optional: multi-hop swap path for Uniswap V3 (empty = single hop)
         address siloAddress; // Only used for Silo protocol liquidations
+        uint256 minAmountOut; // Minimum amount from swap (slippage protection)
     }
 
     // =========================================================================
@@ -66,6 +67,9 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
     /// @notice Owner of the contract (receives profits, can withdraw)
     address public owner;
+
+    /// @notice Pending owner for 2-step ownership transfer
+    address public pendingOwner;
 
     /// @notice Tracks whether we are inside a flash loan to prevent reentrancy
     bool private _inFlashLoan;
@@ -125,6 +129,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
     /// @param params The liquidation parameters
     function liquidateWithAaveFlashLoan(LiquidationParams calldata params) external onlyOwner {
         if (_inFlashLoan) revert FlashLoanReentrancy();
+        if (params.debtToCover == 0) revert("zero debt");
 
         bytes memory encodedParams = abi.encode(params);
 
@@ -141,6 +146,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
     /// @param params The liquidation parameters
     function liquidateWithRadiantFlashLoan(LiquidationParams calldata params) external onlyOwner {
         if (_inFlashLoan) revert FlashLoanReentrancy();
+        if (params.debtToCover == 0) revert("zero debt");
 
         bytes memory encodedParams = abi.encode(params);
 
@@ -168,18 +174,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
     /// @dev Silo does not have its own flash loan; we borrow via AAVE v3
     /// @param params The liquidation parameters (protocol must be Silo)
     function liquidateSiloWithAaveFlashLoan(LiquidationParams calldata params) external onlyOwner {
-        if (_inFlashLoan) revert FlashLoanReentrancy();
-        if (params.protocol != Protocol.Silo) revert InvalidProtocol();
-
-        bytes memory encodedParams = abi.encode(params);
-
-        IAaveV3Pool(AAVE_V3_POOL).flashLoanSimple(
-            address(this),
-            params.debtAsset,
-            params.debtToCover,
-            encodedParams,
-            0 // referralCode
-        );
+        revert("Silo not yet supported");
     }
 
     // =========================================================================
@@ -225,12 +220,19 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
     //                         ADMIN FUNCTIONS
     // =========================================================================
 
-    /// @notice Transfer ownership of the contract
+    /// @notice Initiate a 2-step ownership transfer
     /// @param newOwner The address of the new owner
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+        pendingOwner = newOwner;
+    }
+
+    /// @notice Accept ownership (must be called by the pending owner)
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert OnlyOwner();
+        emit OwnershipTransferred(owner, pendingOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0);
     }
 
     /// @notice Emergency withdraw any ERC-20 token stuck in the contract
@@ -279,6 +281,8 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
         LiquidationParams memory liqParams = abi.decode(params, (LiquidationParams));
 
+        require(asset == liqParams.debtAsset, "asset mismatch");
+
         // Execute the liquidation and swap collateral back to the debt token
         uint256 collateralReceived = _executeLiquidation(liqParams);
         _swapCollateralToDebt(liqParams, collateralReceived);
@@ -295,8 +299,6 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
         if (profit < liqParams.minProfit) revert InsufficientProfit(profit, liqParams.minProfit);
 
-        _inFlashLoan = false;
-
         // Transfer profit to owner
         if (profit > 0) {
             IERC20(asset).safeTransfer(owner, profit);
@@ -304,6 +306,9 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
         // Transfer any residual collateral tokens (in case swap was partial)
         _sweepResidual(liqParams.collateralAsset, asset);
+
+        // Reset reentrancy flag AFTER all external transfers
+        _inFlashLoan = false;
 
         emit LiquidationExecuted(
             liqParams.protocol, liqParams.user, liqParams.collateralAsset, liqParams.debtAsset,
@@ -353,6 +358,9 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
             params.debtToCover,
             false // receive underlying, not aTokens
         );
+
+        // Reset dangling approval
+        IERC20(params.debtAsset).forceApprove(AAVE_V3_POOL, 0);
     }
 
     /// @dev Execute a liquidation on Radiant
@@ -367,6 +375,9 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
             params.debtToCover,
             false // receive underlying, not rTokens
         );
+
+        // Reset dangling approval
+        IERC20(params.debtAsset).forceApprove(RADIANT_LENDING_POOL, 0);
     }
 
     /// @dev Execute a liquidation on Silo Finance
@@ -402,14 +413,14 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
         // Use multi-hop path if provided, otherwise single-hop
         if (params.swapPath.length > 0 && params.swapDex == SwapHelper.DEX.UniswapV3) {
-            amountOut = SwapHelper.swapUniswapV3MultiHop(params.swapPath, collateralAmount, 0);
+            amountOut = SwapHelper.swapUniswapV3MultiHop(params.swapPath, collateralAmount, params.minAmountOut);
         } else {
             amountOut = SwapHelper.swap(
                 params.swapDex,
                 params.collateralAsset,
                 params.debtAsset,
                 collateralAmount,
-                0, // amountOutMin is 0; we enforce minProfit separately
+                params.minAmountOut,
                 params.swapFee
             );
         }
