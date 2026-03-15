@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Arbitrum Liquidator</title>
+<title>Liquidator</title>
 <style>
 :root {
   --bg: #f5f5f7;
@@ -18,17 +18,14 @@
   --orange: #ff9f0a;
   --red: #ff3b30;
   --purple: #af52de;
-  --pink: #ff2d55;
   --teal: #5ac8fa;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
   --shadow-md: 0 4px 14px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04);
-  --shadow-lg: 0 10px 40px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
   --radius: 16px;
   --radius-sm: 12px;
   --radius-xs: 8px;
   --blur: blur(20px) saturate(180%);
 }
-
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #000;
@@ -40,837 +37,766 @@
     --border: rgba(255,255,255,0.08);
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
     --shadow-md: 0 4px 14px rgba(0,0,0,0.3);
-    --shadow-lg: 0 10px 40px rgba(0,0,0,0.4);
   }
 }
-
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
+* { margin:0; padding:0; box-sizing:border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
-    'Helvetica Neue', Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  background: var(--bg); color: var(--text);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  line-height: 1.47059;
-  letter-spacing: -0.022em;
+  line-height: 1.47; letter-spacing: -0.022em;
 }
 
-/* ─── Nav Bar ─── */
-.navbar {
-  position: sticky; top: 0; z-index: 100;
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  background: var(--card);
-  border-bottom: 0.5px solid var(--border);
-  padding: 0 32px;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.navbar-brand {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 17px; font-weight: 600;
-}
-.navbar-brand svg { width: 24px; height: 24px; }
-.navbar-status {
-  display: flex; align-items: center; gap: 20px;
-  font-size: 13px; color: var(--text-secondary);
-}
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  display: inline-block; margin-right: 6px;
-  animation: pulse 2s ease-in-out infinite;
-}
-.status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
-.status-dot.offline { background: var(--red); animation: none; }
-.status-dot.syncing { background: var(--orange); }
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.85); }
-}
+/* ─── Nav ─── */
+.nav { position:sticky; top:0; z-index:100; backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur); background:var(--card); border-bottom:0.5px solid var(--border); padding:0 32px; height:52px; display:flex; align-items:center; justify-content:space-between; }
+.nav-brand { display:flex; align-items:center; gap:10px; font-size:17px; font-weight:600; }
+.nav-brand svg { width:22px; height:22px; }
+.nav-right { display:flex; align-items:center; gap:18px; font-size:13px; color:var(--text-secondary); }
+.dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; }
+.dot.on { background:var(--green); box-shadow:0 0 8px var(--green); animation:pulse 2s ease-in-out infinite; }
+.dot.off { background:var(--red); }
+.dot.warn { background:var(--orange); animation:pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.85)} }
+.mono { font-family:'SF Mono',SFMono-Regular,Menlo,monospace; font-size:12px; }
 
 /* ─── Layout ─── */
-.container {
-  max-width: 1200px; margin: 0 auto;
-  padding: 24px 32px 60px;
-}
-.section-title {
-  font-size: 22px; font-weight: 700;
-  letter-spacing: 0.01em;
-  margin: 32px 0 16px;
-}
-.section-title:first-child { margin-top: 8px; }
+.container { max-width:1200px; margin:0 auto; padding:24px 32px 60px; }
+.section-title { font-size:20px; font-weight:700; margin:28px 0 14px; }
+.section-title:first-child { margin-top:8px; }
 
-/* ─── Stat Cards Grid ─── */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-}
-@media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 500px) { .stats-grid { grid-template-columns: 1fr; } }
+/* ─── Grid helpers ─── */
+.g2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+.g4 { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+.g5 { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; }
+@media(max-width:900px) { .g2,.g3,.g4,.g5 { grid-template-columns:1fr 1fr; } }
+@media(max-width:500px) { .g2,.g3,.g4,.g5 { grid-template-columns:1fr; } }
 
-.stat-card {
-  background: var(--card);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px 22px;
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-.stat-label {
-  font-size: 12px; font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 8px;
-  display: flex; align-items: center; gap: 6px;
-}
-.stat-label .icon {
-  width: 16px; height: 16px;
-  border-radius: 4px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px;
-}
-.stat-value {
-  font-size: 34px; font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-}
-.stat-value .unit {
-  font-size: 18px; font-weight: 500;
-  color: var(--text-secondary);
-  margin-left: 2px;
-}
-.stat-sub {
-  font-size: 12px; color: var(--text-secondary);
-  margin-top: 6px;
-  display: flex; align-items: center; gap: 4px;
-}
-.stat-sub .trend-up { color: var(--green); }
-.stat-sub .trend-down { color: var(--red); }
+/* ─── Cards ─── */
+.card { background:var(--card); backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur); border:0.5px solid var(--border); border-radius:var(--radius); padding:20px 22px; box-shadow:var(--shadow-sm); transition:transform .2s,box-shadow .2s; }
+.card:hover { transform:translateY(-1px); box-shadow:var(--shadow-md); }
+.card-label { font-size:11px; font-weight:500; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+.card-value { font-size:32px; font-weight:700; letter-spacing:-.02em; line-height:1.1; }
+.card-value .u { font-size:16px; font-weight:500; color:var(--text-secondary); margin-left:2px; }
+.card-sub { font-size:12px; color:var(--text-secondary); margin-top:5px; }
+.card-sub .up { color:var(--green); }
+.card-sub .dn { color:var(--red); }
 
-/* ─── Protocol Cards ─── */
-.protocols-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-}
-@media (max-width: 900px) { .protocols-grid { grid-template-columns: 1fr; } }
+/* ─── Pipeline ─── */
+.pipeline { display:flex; align-items:center; gap:0; }
+.pipe-step { flex:1; text-align:center; padding:16px 8px; position:relative; }
+.pipe-step:not(:last-child)::after { content:''; position:absolute; right:-1px; top:50%; transform:translateY(-50%); width:0; height:0; border:6px solid transparent; border-left-color:var(--text-tertiary); }
+.pipe-icon { width:40px; height:40px; border-radius:12px; margin:0 auto 8px; display:flex; align-items:center; justify-content:center; font-size:18px; }
+.pipe-name { font-size:11px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.03em; }
+.pipe-val { font-size:22px; font-weight:700; margin-top:4px; }
+.pipe-val .u { font-size:12px; font-weight:500; color:var(--text-secondary); }
+.pipe-status { font-size:10px; margin-top:4px; }
 
-.protocol-card {
-  background: var(--card);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius);
-  padding: 22px;
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.protocol-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
-}
-.protocol-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 18px;
-}
-.protocol-name {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 17px; font-weight: 600;
-}
-.protocol-icon {
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px; font-weight: 700;
-  color: #fff;
-}
-.protocol-icon.aave { background: linear-gradient(135deg, #B6509E, #2EBAC6); }
-.protocol-icon.radiant { background: linear-gradient(135deg, #0066FF, #00D1FF); }
-.protocol-icon.silo { background: linear-gradient(135deg, #1a1a2e, #607D8B); }
+/* ─── Table ─── */
+.tbl-wrap { background:var(--card); backdrop-filter:var(--blur); border:0.5px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); overflow:hidden; }
+.tbl-head { display:flex; align-items:center; justify-content:space-between; padding:16px 22px; border-bottom:0.5px solid var(--border); }
+.tbl-title { font-size:15px; font-weight:600; }
+.seg { display:flex; gap:2px; background:var(--bg); border-radius:var(--radius-xs); padding:2px; }
+.seg button { border:none; background:transparent; font-family:inherit; font-size:12px; font-weight:500; color:var(--text-secondary); padding:5px 12px; border-radius:6px; cursor:pointer; transition:.15s; }
+.seg button.on { background:var(--card-solid); color:var(--text); box-shadow:var(--shadow-sm); }
+table { width:100%; border-collapse:collapse; }
+th { font-size:11px; font-weight:500; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.04em; text-align:left; padding:10px 22px; border-bottom:0.5px solid var(--border); }
+td { font-size:13px; padding:12px 22px; border-bottom:0.5px solid var(--border); }
+tr:last-child td { border-bottom:none; }
+tr { transition:background .15s; }
+tr:hover { background:rgba(0,0,0,.02); }
+@media(prefers-color-scheme:dark) { tr:hover { background:rgba(255,255,255,.03); } }
 
-.badge {
-  font-size: 11px; font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 20px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-.badge.active { background: rgba(52,199,89,0.12); color: var(--green); }
-.badge.inactive { background: rgba(174,174,178,0.12); color: var(--text-tertiary); }
+.pill { font-size:11px; font-weight:600; padding:3px 10px; border-radius:20px; display:inline-block; }
+.pill.ok { background:rgba(52,199,89,.12); color:var(--green); }
+.pill.err { background:rgba(255,59,48,.12); color:var(--red); }
+.pill.sim { background:rgba(90,200,250,.12); color:var(--teal); }
+.pill.pend { background:rgba(255,159,10,.12); color:var(--orange); }
+.pos { color:var(--green); font-weight:600; }
+.neg { color:var(--red); font-weight:600; }
+.tx-link { font-family:'SF Mono',monospace; font-size:12px; color:var(--accent); text-decoration:none; }
+.tx-link:hover { text-decoration:underline; }
 
-.protocol-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-.protocol-stat-label {
-  font-size: 11px; color: var(--text-secondary);
-  margin-bottom: 4px;
-}
-.protocol-stat-value {
-  font-size: 20px; font-weight: 600;
-}
+/* ─── Bar chart ─── */
+.bars { display:flex; align-items:flex-end; gap:6px; height:100px; padding:0 4px; }
+.bar-c { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.bar { width:100%; border-radius:4px 4px 0 0; min-height:2px; transition:height .6s cubic-bezier(.16,1,.3,1); }
+.bar.g { background:linear-gradient(180deg,var(--green),rgba(52,199,89,.5)); }
+.bar.r { background:linear-gradient(180deg,var(--red),rgba(255,59,48,.5)); }
+.bar-l { font-size:10px; color:var(--text-tertiary); }
 
-/* ─── Live Feed / Table ─── */
-.feed-card {
-  background: var(--card);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-.feed-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 22px;
-  border-bottom: 0.5px solid var(--border);
-}
-.feed-title {
-  font-size: 15px; font-weight: 600;
-}
-.feed-filter {
-  display: flex; gap: 2px;
-  background: var(--bg);
-  border-radius: var(--radius-xs);
-  padding: 2px;
-}
-.feed-filter button {
-  border: none; background: transparent;
-  font-family: inherit;
-  font-size: 12px; font-weight: 500;
-  color: var(--text-secondary);
-  padding: 5px 14px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-.feed-filter button.active {
-  background: var(--card-solid);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-}
+/* ─── Sparkline ─── */
+.spark { width:100%; height:80px; }
+.spark svg { width:100%; height:100%; }
 
-.feed-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-.feed-table th {
-  font-size: 11px; font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  text-align: left;
-  padding: 10px 22px;
-  border-bottom: 0.5px solid var(--border);
-}
-.feed-table td {
-  font-size: 13px;
-  padding: 14px 22px;
-  border-bottom: 0.5px solid var(--border);
-  vertical-align: middle;
-}
-.feed-table tr:last-child td { border-bottom: none; }
-.feed-table tr {
-  transition: background 0.15s ease;
-}
-.feed-table tr:hover { background: rgba(0,0,0,0.02); }
-@media (prefers-color-scheme: dark) {
-  .feed-table tr:hover { background: rgba(255,255,255,0.03); }
-}
+/* ─── Sys rows ─── */
+.sr { display:flex; justify-content:space-between; align-items:center; padding:7px 0; }
+.sr:not(:last-child) { border-bottom:0.5px solid var(--border); }
+.sr-k { font-size:13px; color:var(--text-secondary); }
+.sr-v { font-size:13px; font-weight:500; }
 
-.tx-hash {
-  font-family: 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  color: var(--accent);
-  text-decoration: none;
-}
-.tx-hash:hover { text-decoration: underline; }
+/* ─── Infra indicator ─── */
+.infra-row { display:flex; align-items:center; gap:10px; padding:10px 0; }
+.infra-row:not(:last-child) { border-bottom:0.5px solid var(--border); }
+.infra-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.infra-dot.ok { background:var(--green); }
+.infra-dot.err { background:var(--red); }
+.infra-dot.warn { background:var(--orange); }
+.infra-label { flex:1; font-size:13px; }
+.infra-val { font-size:12px; color:var(--text-secondary); font-family:'SF Mono',monospace; }
 
-.profit-positive { color: var(--green); font-weight: 600; }
-.profit-negative { color: var(--red); font-weight: 600; }
+/* ─── Fade ─── */
+.fi { animation:fadeIn .5s ease forwards; opacity:0; }
+@keyframes fadeIn { to{opacity:1} }
+.fi:nth-child(1){animation-delay:.02s}.fi:nth-child(2){animation-delay:.06s}.fi:nth-child(3){animation-delay:.1s}.fi:nth-child(4){animation-delay:.14s}.fi:nth-child(5){animation-delay:.18s}
 
-.status-pill {
-  font-size: 11px; font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 20px;
-  display: inline-block;
-}
-.status-pill.success { background: rgba(52,199,89,0.12); color: var(--green); }
-.status-pill.failed { background: rgba(255,59,48,0.12); color: var(--red); }
-.status-pill.pending { background: rgba(255,159,10,0.12); color: var(--orange); }
-.status-pill.simulated { background: rgba(90,200,250,0.12); color: var(--teal); }
-
-/* ─── Inline Chart ─── */
-.chart-section {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-@media (max-width: 900px) { .chart-section { grid-template-columns: 1fr; } }
-
-.chart-card {
-  background: var(--card);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius);
-  padding: 22px;
-  box-shadow: var(--shadow-sm);
-}
-.chart-card .chart-title {
-  font-size: 15px; font-weight: 600;
-  margin-bottom: 4px;
-}
-.chart-card .chart-subtitle {
-  font-size: 12px; color: var(--text-secondary);
-  margin-bottom: 16px;
-}
-.mini-chart {
-  width: 100%; height: 120px;
-  position: relative;
-}
-.mini-chart canvas {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-/* ─── Bar Chart ─── */
-.bar-chart {
-  display: flex; align-items: flex-end;
-  gap: 6px; height: 100px;
-  padding: 0 4px;
-}
-.bar-col {
-  flex: 1; display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-.bar {
-  width: 100%;
-  border-radius: 4px 4px 0 0;
-  min-height: 2px;
-  transition: height 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-  position: relative;
-}
-.bar.profit { background: linear-gradient(180deg, var(--green), rgba(52,199,89,0.6)); }
-.bar.loss { background: linear-gradient(180deg, var(--red), rgba(255,59,48,0.6)); }
-.bar-label {
-  font-size: 10px; color: var(--text-tertiary);
-}
-
-/* ─── Sparkline (SVG) ─── */
-.sparkline-container {
-  width: 100%; height: 100px;
-  position: relative;
-}
-.sparkline-container svg {
-  width: 100%; height: 100%;
-}
-.sparkline-value {
-  font-size: 28px; font-weight: 700;
-  margin-bottom: 2px;
-}
-
-/* ─── System Info ─── */
-.sys-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-}
-@media (max-width: 900px) { .sys-grid { grid-template-columns: 1fr; } }
-
-.sys-card {
-  background: var(--card);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px 22px;
-  box-shadow: var(--shadow-sm);
-}
-.sys-card-title {
-  font-size: 12px; font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 14px;
-}
-.sys-row {
-  display: flex; justify-content: space-between;
-  align-items: center;
-  padding: 7px 0;
-}
-.sys-row:not(:last-child) { border-bottom: 0.5px solid var(--border); }
-.sys-key { font-size: 13px; color: var(--text-secondary); }
-.sys-val { font-size: 13px; font-weight: 500; }
-.sys-val.mono {
-  font-family: 'SF Mono', SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-}
-
-/* ─── Progress Ring ─── */
-.ring-container {
-  display: flex; align-items: center; gap: 16px;
-  margin-top: 8px;
-}
-.ring-svg { width: 56px; height: 56px; transform: rotate(-90deg); }
-.ring-bg { fill: none; stroke: var(--border); stroke-width: 5; }
-.ring-fg { fill: none; stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 0.6s ease; }
-.ring-label { font-size: 13px; }
-.ring-label strong { font-size: 22px; font-weight: 700; display: block; }
-
-/* ─── Empty State ─── */
-.empty-state {
-  text-align: center; padding: 48px 20px;
-  color: var(--text-secondary);
-}
-.empty-state .icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
-.empty-state p { font-size: 14px; }
-
-/* ─── Fade-in animation ─── */
-.fade-in {
-  animation: fadeIn 0.5s ease forwards;
-  opacity: 0;
-}
-@keyframes fadeIn {
-  to { opacity: 1; }
-}
-.fade-in:nth-child(1) { animation-delay: 0.02s; }
-.fade-in:nth-child(2) { animation-delay: 0.06s; }
-.fade-in:nth-child(3) { animation-delay: 0.10s; }
-.fade-in:nth-child(4) { animation-delay: 0.14s; }
-
-/* ─── Scrollbar ─── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--text-tertiary); border-radius: 3px; }
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--text-tertiary);border-radius:3px}
 </style>
 </head>
 <body>
 
-<!-- Nav -->
-<nav class="navbar">
-  <div class="navbar-brand">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-    </svg>
-    Arbitrum Liquidator
+<nav class="nav">
+  <div class="nav-brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    Liquidator
   </div>
-  <div class="navbar-status">
-    <span><span class="status-dot live" id="statusDot"></span><span id="statusText">运行中</span></span>
-    <span id="blockInfo" style="font-family: 'SF Mono', monospace; font-size: 12px;">区块 #189,234,567</span>
-    <span id="clockDisplay">--:--:--</span>
+  <div class="nav-right">
+    <span id="modeLabel" class="pill sim">DRY-RUN</span>
+    <span><span class="dot on" id="sDot"></span><span id="sText">运行中</span></span>
+    <span class="mono" id="blockInfo">#—</span>
+    <span id="clock">--:--:--</span>
   </div>
 </nav>
 
 <div class="container">
 
-  <!-- Overview Stats -->
-  <div class="section-title fade-in">总览</div>
-  <div class="stats-grid">
-    <div class="stat-card fade-in">
-      <div class="stat-label">累计利润</div>
-      <div class="stat-value" id="totalProfit">12.48<span class="unit">ETH</span></div>
-      <div class="stat-sub"><span class="trend-up">↑ 2.3 ETH</span>&nbsp;过去 24h</div>
+  <!-- ── P&L ── -->
+  <div class="section-title fi">损益</div>
+  <div class="g5">
+    <div class="card fi">
+      <div class="card-label">净利润 (扣Gas)</div>
+      <div class="card-value" id="netProfit">0.00<span class="u">ETH</span></div>
+      <div class="card-sub" id="netProfitUsd">$0.00</div>
     </div>
-    <div class="stat-card fade-in">
-      <div class="stat-label">清算次数</div>
-      <div class="stat-value" id="totalLiquidations">347</div>
-      <div class="stat-sub"><span class="trend-up">+18</span>&nbsp;今日</div>
+    <div class="card fi">
+      <div class="card-label">今日净利润</div>
+      <div class="card-value" id="todayProfit">0.00<span class="u">ETH</span></div>
+      <div class="card-sub" id="todayTrades">0 笔交易</div>
     </div>
-    <div class="stat-card fade-in">
-      <div class="stat-label">成功率</div>
-      <div class="stat-value" id="successRate">94.8<span class="unit">%</span></div>
-      <div class="stat-sub">329 成功 / 18 失败</div>
+    <div class="card fi">
+      <div class="card-label">累计 Gas 支出</div>
+      <div class="card-value" id="gasSpent">0.00<span class="u">ETH</span></div>
+      <div class="card-sub" id="avgGas">均 0 ETH/笔</div>
     </div>
-    <div class="stat-card fade-in">
-      <div class="stat-label">平均延迟</div>
-      <div class="stat-value" id="avgLatency">14.2<span class="unit">ms</span></div>
-      <div class="stat-sub">区块处理全链路</div>
+    <div class="card fi">
+      <div class="card-label">钱包余额</div>
+      <div class="card-value" id="walletBal">—<span class="u">ETH</span></div>
+      <div class="card-sub mono" id="walletAddr">—</div>
+    </div>
+    <div class="card fi">
+      <div class="card-label">胜率</div>
+      <div class="card-value" id="winRate">—<span class="u">%</span></div>
+      <div class="card-sub" id="winDetail">— 成功 / — 失败</div>
     </div>
   </div>
 
-  <!-- Protocol Breakdown -->
-  <div class="section-title">协议状态</div>
-  <div class="protocols-grid">
-    <!-- AAVE V3 -->
-    <div class="protocol-card fade-in">
-      <div class="protocol-header">
-        <div class="protocol-name">
-          <div class="protocol-icon aave">A</div>
-          AAVE V3
+  <!-- ── Pipeline ── -->
+  <div class="section-title fi">链路延迟</div>
+  <div class="card fi" style="padding:12px 0;">
+    <div class="pipeline">
+      <div class="pipe-step">
+        <div class="pipe-icon" style="background:rgba(90,200,250,.12);color:var(--teal);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
         </div>
-        <span class="badge active">活跃</span>
+        <div class="pipe-name">Seq Feed</div>
+        <div class="pipe-val" id="pFeed">0<span class="u">ms</span></div>
+        <div class="pipe-status" id="pFeedSt" style="color:var(--green);">推送中</div>
       </div>
-      <div class="protocol-stats">
-        <div>
-          <div class="protocol-stat-label">清算次数</div>
-          <div class="protocol-stat-value" id="aaveLiqCount">214</div>
+      <div class="pipe-step">
+        <div class="pipe-icon" style="background:rgba(0,113,227,.12);color:var(--accent);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
-        <div>
-          <div class="protocol-stat-label">利润</div>
-          <div class="protocol-stat-value" id="aaveProfit" style="color: var(--green);">8.32 E</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">监控仓位</div>
-          <div class="protocol-stat-value" id="aavePositions">1,247</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">待清算</div>
-          <div class="protocol-stat-value" id="aavePending" style="color: var(--orange);">3</div>
-        </div>
+        <div class="pipe-name">状态读取</div>
+        <div class="pipe-val" id="pRead"><1<span class="u">ms</span></div>
+        <div class="pipe-status" id="pReadSt" style="color:var(--text-tertiary);">本地 IPC</div>
       </div>
-    </div>
-    <!-- Radiant -->
-    <div class="protocol-card fade-in">
-      <div class="protocol-header">
-        <div class="protocol-name">
-          <div class="protocol-icon radiant">R</div>
-          Radiant Capital
+      <div class="pipe-step">
+        <div class="pipe-icon" style="background:rgba(175,82,222,.12);color:var(--purple);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
         </div>
-        <span class="badge active">活跃</span>
+        <div class="pipe-name">revm 模拟</div>
+        <div class="pipe-val" id="pSim">—<span class="u">ms</span></div>
+        <div class="pipe-status" id="pSimSt" style="color:var(--text-tertiary);">待运行</div>
       </div>
-      <div class="protocol-stats">
-        <div>
-          <div class="protocol-stat-label">清算次数</div>
-          <div class="protocol-stat-value" id="radiantLiqCount">133</div>
+      <div class="pipe-step">
+        <div class="pipe-icon" style="background:rgba(52,199,89,.12);color:var(--green);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </div>
-        <div>
-          <div class="protocol-stat-label">利润</div>
-          <div class="protocol-stat-value" id="radiantProfit" style="color: var(--green);">4.16 E</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">监控仓位</div>
-          <div class="protocol-stat-value" id="radiantPositions">893</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">待清算</div>
-          <div class="protocol-stat-value" id="radiantPending" style="color: var(--orange);">1</div>
-        </div>
+        <div class="pipe-name">发送交易</div>
+        <div class="pipe-val" id="pSend">—<span class="u">ms</span></div>
+        <div class="pipe-status" id="pSendSt" style="color:var(--text-tertiary);">持久连接</div>
       </div>
-    </div>
-    <!-- Silo -->
-    <div class="protocol-card fade-in">
-      <div class="protocol-header">
-        <div class="protocol-name">
-          <div class="protocol-icon silo">S</div>
-          Silo Finance
+      <div class="pipe-step">
+        <div class="pipe-icon" style="background:rgba(255,159,10,.12);color:var(--orange);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </div>
-        <span class="badge inactive">未启用</span>
-      </div>
-      <div class="protocol-stats">
-        <div>
-          <div class="protocol-stat-label">清算次数</div>
-          <div class="protocol-stat-value" style="color:var(--text-tertiary);">—</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">利润</div>
-          <div class="protocol-stat-value" style="color:var(--text-tertiary);">—</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">监控仓位</div>
-          <div class="protocol-stat-value" style="color:var(--text-tertiary);">—</div>
-        </div>
-        <div>
-          <div class="protocol-stat-label">待清算</div>
-          <div class="protocol-stat-value" style="color:var(--text-tertiary);">—</div>
-        </div>
+        <div class="pipe-name">全链路</div>
+        <div class="pipe-val" id="pTotal">—<span class="u">ms</span></div>
+        <div class="pipe-status" id="pTotalSt" style="color:var(--text-tertiary);">目标 <20ms</div>
       </div>
     </div>
   </div>
 
-  <!-- Charts -->
-  <div class="section-title">趋势</div>
-  <div class="chart-section">
-    <div class="chart-card fade-in">
-      <div class="chart-title">每日利润</div>
-      <div class="chart-subtitle">过去 14 天 (ETH)</div>
-      <div class="bar-chart" id="profitChart"></div>
+  <!-- ── Charts ── -->
+  <div class="section-title fi">趋势</div>
+  <div class="g2">
+    <div class="card fi">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">每日净利润</span>
+        <span style="font-size:12px;color:var(--text-secondary);" id="chartPeriod">过去 14 天 (ETH)</span>
+      </div>
+      <div class="bars" id="profitChart"></div>
     </div>
-    <div class="chart-card fade-in">
-      <div class="chart-title">清算延迟</div>
-      <div class="chart-subtitle">最近 60 个区块平均 (ms)</div>
-      <div class="sparkline-container" id="latencyChart"></div>
+    <div class="card fi">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">发送延迟</span>
+        <span style="font-size:12px;color:var(--text-secondary);">最近 60 笔 (ms)</span>
+      </div>
+      <div class="spark" id="latencyChart"></div>
     </div>
   </div>
 
-  <!-- Recent Liquidations -->
-  <div class="section-title">最近清算</div>
-  <div class="feed-card">
-    <div class="feed-header">
-      <div class="feed-title">交易记录</div>
-      <div class="feed-filter">
-        <button class="active" onclick="filterFeed('all', this)">全部</button>
-        <button onclick="filterFeed('success', this)">成功</button>
-        <button onclick="filterFeed('failed', this)">失败</button>
-        <button onclick="filterFeed('simulated', this)">模拟</button>
+  <!-- ── Trade Log ── -->
+  <div class="section-title fi">交易记录</div>
+  <div class="tbl-wrap fi">
+    <div class="tbl-head">
+      <div class="tbl-title" id="tradeCount">共 0 笔</div>
+      <div class="seg">
+        <button class="on" onclick="filt('all',this)">全部</button>
+        <button onclick="filt('ok',this)">成功</button>
+        <button onclick="filt('err',this)">失败</button>
+        <button onclick="filt('sim',this)">模拟</button>
       </div>
     </div>
-    <table class="feed-table">
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>协议</th>
-          <th>借款人</th>
-          <th>抵押 / 债务</th>
-          <th>金额</th>
-          <th>利润</th>
-          <th>延迟</th>
-          <th>状态</th>
-          <th>TX</th>
-        </tr>
-      </thead>
-      <tbody id="feedTableBody"></tbody>
+    <table>
+      <thead><tr>
+        <th>时间</th>
+        <th>协议</th>
+        <th>抵押 / 债务</th>
+        <th>清算金额</th>
+        <th>利润</th>
+        <th>Gas</th>
+        <th>延迟</th>
+        <th>状态</th>
+        <th>TX</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
     </table>
   </div>
 
-  <!-- System Info -->
-  <div class="section-title">系统</div>
-  <div class="sys-grid">
-    <div class="sys-card fade-in">
-      <div class="sys-card-title">节点</div>
-      <div class="sys-row">
-        <span class="sys-key">Nitro 版本</span>
-        <span class="sys-val">v3.2.1</span>
+  <!-- ── Infrastructure ── -->
+  <div class="section-title fi">基础设施</div>
+  <div class="g3">
+    <div class="card fi">
+      <div class="card-label">Arbitrum 节点</div>
+      <div class="infra-row">
+        <div class="infra-dot" id="nodeDot"></div>
+        <div class="infra-label" id="nodeLabel">检查中...</div>
+        <div class="infra-val" id="nodeBlock">—</div>
       </div>
-      <div class="sys-row">
-        <span class="sys-key">链</span>
-        <span class="sys-val">Arbitrum One (42161)</span>
-      </div>
-      <div class="sys-row">
-        <span class="sys-key">同步状态</span>
-        <span class="sys-val" style="color: var(--green);" id="syncStatus">已同步</span>
-      </div>
-      <div class="sys-row">
-        <span class="sys-key">连接方式</span>
-        <span class="sys-val mono" id="connType">WebSocket</span>
-      </div>
-      <div class="sys-row">
-        <span class="sys-key">Peers</span>
-        <span class="sys-val" id="peerCount">24</span>
-      </div>
+      <div class="sr"><span class="sr-k">版本</span><span class="sr-v" id="nodeVer">Nitro v3.9.6</span></div>
+      <div class="sr"><span class="sr-k">连接</span><span class="sr-v mono" id="nodeConn">—</span></div>
+      <div class="sr"><span class="sr-k">数据目录</span><span class="sr-v mono">/data/arbitrum</span></div>
     </div>
+    <div class="card fi">
+      <div class="card-label">Sequencer Feed</div>
+      <div class="infra-row">
+        <div class="infra-dot" id="feedDot"></div>
+        <div class="infra-label" id="feedLabel">检查中...</div>
+        <div class="infra-val" id="feedRate">—</div>
+      </div>
+      <div class="sr"><span class="sr-k">端点</span><span class="sr-v mono" style="font-size:11px;">arb1.arbitrum.io/feed</span></div>
+      <div class="sr"><span class="sr-k">消息计数</span><span class="sr-v" id="feedCount">0</span></div>
+      <div class="sr"><span class="sr-k">最后 seq#</span><span class="sr-v mono" id="feedSeq">—</span></div>
+    </div>
+    <div class="card fi">
+      <div class="card-label">Bot 状态</div>
+      <div class="infra-row">
+        <div class="infra-dot" id="botDot"></div>
+        <div class="infra-label" id="botLabel">—</div>
+        <div class="infra-val" id="botUptime">—</div>
+      </div>
+      <div class="sr"><span class="sr-k">模式</span><span class="sr-v" id="botMode">Dry-Run</span></div>
+      <div class="sr"><span class="sr-k">区块处理</span><span class="sr-v" id="botBlocks">0</span></div>
+      <div class="sr"><span class="sr-k">错误数</span><span class="sr-v" id="botErrors" style="color:var(--text);">0</span></div>
+    </div>
+  </div>
 
-    <div class="sys-card fade-in">
-      <div class="sys-card-title">钱包</div>
-      <div class="sys-row">
-        <span class="sys-key">地址</span>
-        <span class="sys-val mono" id="walletAddr">0x1a2b...9f0e</span>
-      </div>
-      <div class="sys-row">
-        <span class="sys-key">ETH 余额</span>
-        <span class="sys-val" id="ethBalance">0.482 ETH</span>
-      </div>
-      <div class="sys-row">
-        <span class="sys-key">Gas 已消耗</span>
-        <span class="sys-val" id="gasSpent">1.24 ETH</span>
-      </div>
-      <div class="sys-row">
-        <span class="sys-key">Nonce</span>
-        <span class="sys-val mono" id="nonce">412</span>
-      </div>
+  <!-- ── Near Liquidation ── -->
+  <div class="section-title fi">接近清算</div>
+  <div class="tbl-wrap fi" id="nearLiqWrap">
+    <div class="tbl-head">
+      <div class="tbl-title" id="nearLiqCount">扫描中...</div>
     </div>
+    <table>
+      <thead><tr>
+        <th>协议</th>
+        <th>借款人</th>
+        <th>健康因子</th>
+        <th>抵押品(USD)</th>
+        <th>债务(USD)</th>
+      </tr></thead>
+      <tbody id="nearLiqBody">
+        <tr><td colspan="5" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">扫描中...</td></tr>
+      </tbody>
+    </table>
+  </div>
 
-    <div class="sys-card fade-in">
-      <div class="sys-card-title">性能</div>
-      <div class="ring-container">
-        <svg class="ring-svg" viewBox="0 0 56 56">
-          <circle class="ring-bg" cx="28" cy="28" r="24"/>
-          <circle class="ring-fg" cx="28" cy="28" r="24"
-            stroke="var(--green)"
-            stroke-dasharray="150.8"
-            stroke-dashoffset="7.54"
-            id="successRing"/>
-        </svg>
-        <div class="ring-label">
-          <strong id="ringPct">94.8%</strong>
-          成功率
-        </div>
-      </div>
-      <div style="margin-top: 14px;">
-        <div class="sys-row">
-          <span class="sys-key">运行时间</span>
-          <span class="sys-val" id="uptime">3d 14h 22m</span>
-        </div>
-        <div class="sys-row">
-          <span class="sys-key">模式</span>
-          <span class="sys-val" id="runMode">Dry-Run</span>
-        </div>
-      </div>
+  <!-- ── Market Liquidations ── -->
+  <div class="section-title fi">市场清算</div>
+  <div class="tbl-wrap fi" id="mktLiqWrap">
+    <div class="tbl-head">
+      <div class="tbl-title" id="mktLiqCount">加载中...</div>
     </div>
+    <table>
+      <thead><tr>
+        <th>时间</th>
+        <th>协议</th>
+        <th>被清算人</th>
+        <th>清算人</th>
+        <th>抵押/债务</th>
+        <th>金额</th>
+        <th>TX</th>
+      </tr></thead>
+      <tbody id="mktLiqBody">
+        <tr><td colspan="7" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">加载中...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Competitors ── -->
+  <div class="section-title fi">竞争对手</div>
+  <div class="tbl-wrap fi" id="compWrap">
+    <div class="tbl-head">
+      <div class="tbl-title" id="compCount">加载中...</div>
+    </div>
+    <table>
+      <thead><tr>
+        <th>排名</th>
+        <th>地址</th>
+        <th>清算次数</th>
+        <th>活跃协议</th>
+        <th>最近活动</th>
+      </tr></thead>
+      <tbody id="compBody">
+        <tr><td colspan="5" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">加载中...</td></tr>
+      </tbody>
+    </table>
   </div>
 
 </div>
 
 <script>
-// ─── Mock Data ───
-const mockLiquidations = [
-  { time: '14:23:08', protocol: 'AAVE V3', user: '0x8f3e...a21c', collateral: 'WETH', debt: 'USDC', amount: '$12,450', profit: '+0.082 ETH', latency: '11ms', status: 'success', tx: '0xabc1...def2' },
-  { time: '14:21:45', protocol: 'Radiant', user: '0x2d4a...b8f3', collateral: 'ARB', debt: 'USDT', amount: '$8,230', profit: '+0.045 ETH', latency: '14ms', status: 'success', tx: '0x1234...5678' },
-  { time: '14:19:12', protocol: 'AAVE V3', user: '0xc7b1...3e9d', collateral: 'WBTC', debt: 'DAI', amount: '$34,120', profit: '+0.21 ETH', latency: '9ms', status: 'success', tx: '0x9876...fedc' },
-  { time: '14:17:33', protocol: 'AAVE V3', user: '0x5f2e...8a1b', collateral: 'LINK', debt: 'USDC', amount: '$4,560', profit: '-0.003 ETH', latency: '22ms', status: 'failed', tx: '0xaaaa...bbbb' },
-  { time: '14:15:01', protocol: 'Radiant', user: '0xe1a9...4c2d', collateral: 'WETH', debt: 'USDC', amount: '$19,800', profit: '+0.11 ETH', latency: '13ms', status: 'success', tx: '0xcccc...dddd' },
-  { time: '14:12:44', protocol: 'AAVE V3', user: '0x3b8c...f6e0', collateral: 'GMX', debt: 'USDT', amount: '$6,780', profit: '+0.038 ETH', latency: '16ms', status: 'simulated', tx: '—' },
-  { time: '14:10:22', protocol: 'Radiant', user: '0xd4f7...1a5c', collateral: 'MAGIC', debt: 'DAI', amount: '$2,340', profit: '+0.012 ETH', latency: '12ms', status: 'success', tx: '0xeeee...ffff' },
-  { time: '14:08:55', protocol: 'AAVE V3', user: '0x9c1e...b3d7', collateral: 'WETH', debt: 'FRAX', amount: '$28,900', profit: '+0.18 ETH', latency: '10ms', status: 'success', tx: '0x1111...2222' },
-  { time: '14:06:30', protocol: 'AAVE V3', user: '0x7a3d...c8f2', collateral: 'wstETH', debt: 'USDC', amount: '$15,670', profit: '+0.092 ETH', latency: '18ms', status: 'success', tx: '0x3333...4444' },
-  { time: '14:04:11', protocol: 'Radiant', user: '0xb2e8...d5a9', collateral: 'ARB', debt: 'USDT', amount: '$5,430', profit: '-0.001 ETH', latency: '25ms', status: 'failed', tx: '0x5555...6666' },
-];
+// ─── State ───
+const state = {
+  connected: false,
+  trades: [],
+  dailyPnl: Array(14).fill(0),
+  latencies: [],
+};
 
-const statusLabels = { success: '成功', failed: '失败', pending: '等待中', simulated: '模拟' };
+// ─── No mock trades — only show real data from the API ───
 
-// ─── Render Feed ───
-let currentFilter = 'all';
-function renderFeed(filter) {
-  const tbody = document.getElementById('feedTableBody');
-  const filtered = filter === 'all' ? mockLiquidations : mockLiquidations.filter(l => l.status === filter);
-  tbody.innerHTML = filtered.map(l => `
-    <tr data-status="${l.status}">
-      <td style="font-family:'SF Mono',monospace;font-size:12px;color:var(--text-secondary)">${l.time}</td>
-      <td><span style="font-weight:500">${l.protocol}</span></td>
-      <td><code style="font-size:12px;color:var(--text-secondary)">${l.user}</code></td>
-      <td>${l.collateral} → ${l.debt}</td>
-      <td>${l.amount}</td>
-      <td class="${l.profit.startsWith('+') ? 'profit-positive' : 'profit-negative'}">${l.profit}</td>
-      <td>${l.latency}</td>
-      <td><span class="status-pill ${l.status}">${statusLabels[l.status]}</span></td>
-      <td>${l.tx === '—' ? '—' : `<a class="tx-hash" href="https://arbiscan.io/tx/${l.tx}" target="_blank">${l.tx}</a>`}</td>
-    </tr>
-  `).join('');
-}
-function filterFeed(filter, btn) {
-  currentFilter = filter;
-  document.querySelectorAll('.feed-filter button').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderFeed(filter);
-}
-renderFeed('all');
+const statusMap = { ok:'成功', err:'失败', sim:'模拟', pend:'等待' };
+const pillMap = { ok:'ok', err:'err', sim:'sim', pend:'pend' };
 
-// ─── Profit Bar Chart ───
-function renderProfitChart() {
-  const data = [0.68, 1.12, 0.45, 0.89, 1.34, 0.72, 1.56, 0.91, 1.23, 0.34, 1.78, 0.56, 1.45, 2.30];
-  const labels = ['3/2','3/3','3/4','3/5','3/6','3/7','3/8','3/9','3/10','3/11','3/12','3/13','3/14','3/15'];
-  const max = Math.max(...data);
-  const container = document.getElementById('profitChart');
-  container.innerHTML = data.map((v, i) => `
-    <div class="bar-col">
-      <div class="bar profit" style="height:${(v / max) * 90}px" title="${v} ETH"></div>
-      <div class="bar-label">${labels[i]}</div>
-    </div>
-  `).join('');
-}
-renderProfitChart();
-
-// ─── Latency Sparkline ───
-function renderLatencyChart() {
-  const points = [];
-  for (let i = 0; i < 60; i++) {
-    points.push(8 + Math.random() * 16 + Math.sin(i / 8) * 4);
+// ─── Render trades ───
+let curFilter = 'all';
+function renderTrades(filter) {
+  const trades = state.trades;
+  if (!trades.length) {
+    document.getElementById('tradeCount').textContent = '暂无交易';
+    document.getElementById('tbody').innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">Bot 未运行，启动后交易记录将显示在这里</td></tr>`;
+    return;
   }
-  const container = document.getElementById('latencyChart');
-  const w = 500, h = 100, pad = 2;
-  const min = Math.min(...points) - 2, max = Math.max(...points) + 2;
-  const xStep = (w - pad * 2) / (points.length - 1);
-  const toY = v => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
-  const pathD = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${pad + i * xStep},${toY(v)}`).join(' ');
-  const areaD = pathD + ` L${pad + (points.length - 1) * xStep},${h} L${pad},${h} Z`;
-
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const strokeColor = isDark ? '#5ac8fa' : '#0071e3';
-  const fillColor = isDark ? 'rgba(90,200,250,0.08)' : 'rgba(0,113,227,0.06)';
-
-  container.innerHTML = `
-    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="latGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${strokeColor}" stop-opacity="0.15"/>
-          <stop offset="100%" stop-color="${strokeColor}" stop-opacity="0"/>
-        </linearGradient>
-      </defs>
-      <path d="${areaD}" fill="url(#latGrad)"/>
-      <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="1.5" stroke-linejoin="round"/>
-      <circle cx="${pad + (points.length - 1) * xStep}" cy="${toY(points[points.length - 1])}" r="3" fill="${strokeColor}"/>
-    </svg>
-  `;
+  const filtered = filter === 'all' ? trades : trades.filter(t => t.status === filter);
+  const tbody = document.getElementById('tbody');
+  document.getElementById('tradeCount').textContent = `共 ${filtered.length} 笔`;
+  tbody.innerHTML = filtered.map(t => {
+    const profitNum = parseFloat(t.profit);
+    const cls = profitNum >= 0 ? 'pos' : 'neg';
+    return `<tr>
+      <td class="mono" style="color:var(--text-secondary)">${t.time}</td>
+      <td style="font-weight:500">${t.proto}</td>
+      <td>${t.pair}</td>
+      <td>${t.amount}</td>
+      <td class="${cls}">${t.profit} ETH</td>
+      <td style="color:var(--text-secondary)">${t.gas} E</td>
+      <td>${t.latency}ms</td>
+      <td><span class="pill ${pillMap[t.status]}">${statusMap[t.status]}</span></td>
+      <td>${t.tx === '—' ? '—' : `<a class="tx-link" href="https://arbiscan.io/tx/${t.tx}" target="_blank">${t.tx}</a>`}</td>
+    </tr>`;
+  }).join('');
 }
-renderLatencyChart();
-
-// ─── Clock ───
-function updateClock() {
-  const now = new Date();
-  document.getElementById('clockDisplay').textContent = now.toTimeString().slice(0, 8);
+function filt(f, btn) {
+  curFilter = f;
+  document.querySelectorAll('.seg button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  renderTrades(f);
 }
-setInterval(updateClock, 1000);
-updateClock();
+renderTrades('all');
 
-// ─── Simulated block increment ───
-let blockNum = 189234567;
-function tickBlock() {
-  blockNum += Math.floor(Math.random() * 3) + 1;
-  document.getElementById('blockInfo').textContent = `区块 #${blockNum.toLocaleString()}`;
+// ─── PnL chart (mock) ───
+function renderPnlChart() {
+  const data = state.dailyPnl;
+  const allZero = data.every(v => v === 0);
+  const today = new Date();
+  const labels = data.map((_,i) => { const d=new Date(today); d.setDate(d.getDate()-13+i); return `${d.getMonth()+1}/${d.getDate()}`; });
+  if (allZero) {
+    document.getElementById('profitChart').innerHTML = `<div style="width:100%;height:100px;display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:13px;">暂无数据</div>`;
+    return;
+  }
+  const absMax = Math.max(...data.map(Math.abs), 0.001);
+  document.getElementById('profitChart').innerHTML = data.map((v,i) => {
+    const h = Math.max(2, (Math.abs(v)/absMax)*85);
+    const cls = v >= 0 ? 'g' : 'r';
+    return `<div class="bar-c"><div class="bar ${cls}" style="height:${h}px" title="${v>0?'+':''}${v.toFixed(3)} ETH"></div><div class="bar-l">${labels[i]}</div></div>`;
+  }).join('');
 }
-setInterval(tickBlock, 250);
+renderPnlChart();
 
-// ─── API Integration (when backend is running) ───
-const API_BASE = window.location.origin + '/api';
+// ─── Latency sparkline ───
+function renderLatency() {
+  if (state.latencies.length < 2) {
+    document.getElementById('latencyChart').innerHTML = `<div style="width:100%;height:80px;display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:13px;">暂无数据</div>`;
+    return;
+  }
+  const pts = state.latencies.slice(-60);
+  const w=500, h=80, p=2;
+  const mn=Math.min(...pts)-1, mx=Math.max(...pts)+1;
+  const xs=(w-p*2)/(pts.length-1);
+  const ty=v=>h-p-((v-mn)/(mx-mn))*(h-p*2);
+  const d=pts.map((v,i)=>`${i?'L':'M'}${p+i*xs},${ty(v)}`).join(' ');
+  const a=d+` L${p+(pts.length-1)*xs},${h} L${p},${h} Z`;
+  const dk=window.matchMedia('(prefers-color-scheme:dark)').matches;
+  const sc=dk?'#5ac8fa':'#0071e3';
+  document.getElementById('latencyChart').innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${sc}" stop-opacity=".15"/><stop offset="100%" stop-color="${sc}" stop-opacity="0"/></linearGradient></defs><path d="${a}" fill="url(#lg)"/><path d="${d}" fill="none" stroke="${sc}" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${p+(pts.length-1)*xs}" cy="${ty(pts[pts.length-1])}" r="3" fill="${sc}"/></svg>`;
+}
+renderLatency();
 
-async function fetchMetrics() {
+// ─── Clock & block ticker ───
+function tick() { document.getElementById('clock').textContent = new Date().toTimeString().slice(0,8); }
+setInterval(tick,1000); tick();
+let blk = 0;
+function tickBlk() {
+  if(!blk) return;
+  blk += Math.floor(Math.random()*3)+1;
+  document.getElementById('blockInfo').textContent = `#${blk.toLocaleString()}`;
+}
+setInterval(tickBlk, 250);
+
+// ─── Compute mock P&L from trades ───
+function computeMockPnl() {
+  const trades = state.trades;
+  let grossProfit=0, totalGas=0, wins=0, losses=0;
+  trades.forEach(t => {
+    const p = parseFloat(t.profit)||0;
+    const g = parseFloat(t.gas)||0;
+    if(p>0) { grossProfit+=p; wins++; }
+    else { grossProfit+=p; losses++; }
+    totalGas+=g;
+  });
+  const net = grossProfit - totalGas;
+  document.getElementById('netProfit').innerHTML = `${net>=0?'':'-'}${Math.abs(net).toFixed(3)}<span class="u">ETH</span>`;
+  document.getElementById('netProfitUsd').innerHTML = `$${(net*3500).toFixed(2)}`;
+  document.getElementById('netProfit').parentElement.querySelector('.card-value').style.color = net>=0?'var(--green)':'var(--red)';
+  document.getElementById('todayProfit').innerHTML = `${net>=0?'+':''}${net.toFixed(3)}<span class="u">ETH</span>`;
+  document.getElementById('todayTrades').textContent = `${trades.length} 笔交易`;
+  document.getElementById('gasSpent').innerHTML = `${totalGas.toFixed(4)}<span class="u">ETH</span>`;
+  document.getElementById('avgGas').textContent = trades.length ? `均 ${(totalGas/trades.length).toFixed(4)} ETH/笔` : '—';
+  const total = wins+losses;
+  const rate = total ? ((wins/total)*100).toFixed(1) : '—';
+  document.getElementById('winRate').innerHTML = `${rate}<span class="u">%</span>`;
+  document.getElementById('winDetail').textContent = `${wins} 成功 / ${losses} 失败`;
+}
+computeMockPnl();
+
+// ─── Real-time latency probes (server-side via /api/latency) ───
+const REVM_EST = 5;
+
+function setEl(id, html) { document.getElementById(id).innerHTML = html; }
+function latColor(ms, good, warn) { return ms <= good ? 'var(--green)' : ms <= warn ? 'var(--orange)' : 'var(--red)'; }
+
+async function runLatencyProbe() {
+  let probes, hist;
   try {
-    const res = await fetch(API_BASE + '/metrics');
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
-}
+    const res = await fetch('/api/latency');
+    if (!res.ok) return;
+    const d = await res.json();
+    probes = d.probes;
+    hist = d.history;
+  } catch { return; }
 
-async function pollMetrics() {
-  const data = await fetchMetrics();
-  if (!data) return; // 后端未运行，使用 mock 数据
+  const read = probes.read || {};
+  const readArb = probes.read_arb1 || {};
+  const seq = probes.sequencer || {};
+  const local = probes.local_node || {};
 
-  // 更新总览
-  if (data.total_profit !== undefined) {
-    document.getElementById('totalProfit').innerHTML = `${data.total_profit.toFixed(2)}<span class="unit">ETH</span>`;
+  // Block display (prefer local node, fallback to read)
+  const blockSrc = local.block || read.block || readArb.block;
+  if (blockSrc) {
+    blk = blockSrc;
+    document.getElementById('blockInfo').textContent = `#${blk.toLocaleString()}`;
   }
-  if (data.total_liquidations !== undefined) {
-    document.getElementById('totalLiquidations').textContent = data.total_liquidations.toLocaleString();
-  }
-  if (data.success_rate !== undefined) {
-    document.getElementById('successRate').innerHTML = `${data.success_rate.toFixed(1)}<span class="unit">%</span>`;
-  }
-  if (data.avg_latency_ms !== undefined) {
-    document.getElementById('avgLatency').innerHTML = `${data.avg_latency_ms.toFixed(1)}<span class="unit">ms</span>`;
-  }
-  // 更新状态
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
-  if (data.status === 'running') {
-    dot.className = 'status-dot live';
-    txt.textContent = '运行中';
-  } else if (data.status === 'syncing') {
-    dot.className = 'status-dot syncing';
-    txt.textContent = '同步中';
+
+  // ── Pipeline: Feed (always push) ──
+  setEl('pFeed', `0<span class="u">ms</span>`);
+  document.getElementById('pFeedSt').textContent = '被动推送';
+  document.getElementById('pFeedSt').style.color = 'var(--green)';
+
+  // ── Pipeline: Read ──
+  // Prefer local node if available, else llamarpc
+  const readSrc = (local.ms > 0) ? local : read;
+  const readLabel = (local.ms > 0) ? '本地 IPC' : 'llamarpc';
+  if (readSrc.ms >= 0) {
+    setEl('pRead', `${readSrc.ms}<span class="u">ms</span>`);
+    document.getElementById('pReadSt').textContent = readLabel;
+    document.getElementById('pReadSt').style.color = latColor(readSrc.ms, 5, 50);
   } else {
-    dot.className = 'status-dot offline';
-    txt.textContent = '离线';
+    setEl('pRead', `—<span class="u">ms</span>`);
+    document.getElementById('pReadSt').textContent = '不可达';
+    document.getElementById('pReadSt').style.color = 'var(--red)';
+  }
+
+  // ── Pipeline: Sim ──
+  setEl('pSim', `~${REVM_EST}<span class="u">ms</span>`);
+  document.getElementById('pSimSt').textContent = '预估值';
+  document.getElementById('pSimSt').style.color = 'var(--text-secondary)';
+
+  // ── Pipeline: Send (Sequencer, persistent conn) ──
+  if (seq.ms >= 0) {
+    setEl('pSend', `${seq.ms}<span class="u">ms</span>`);
+    document.getElementById('pSendSt').textContent = seq.ms < 20 ? '持久连接' : seq.ms < 50 ? '正常' : '偏慢';
+    document.getElementById('pSendSt').style.color = latColor(seq.ms, 20, 50);
+  } else {
+    setEl('pSend', `—<span class="u">ms</span>`);
+    document.getElementById('pSendSt').textContent = '不可达';
+    document.getElementById('pSendSt').style.color = 'var(--red)';
+  }
+
+  // ── Pipeline: Total ──
+  if (readSrc.ms >= 0 && seq.ms >= 0) {
+    const total = readSrc.ms + REVM_EST + 1 + seq.ms;
+    setEl('pTotal', `${total}<span class="u">ms</span>`);
+    document.getElementById('pTotalSt').style.color = latColor(total, 20, 50);
+    document.getElementById('pTotalSt').textContent = total <= 20 ? '达标' : total <= 50 ? '可接受' : '偏高';
+  }
+
+  // ── Sparkline from server history ──
+  if (hist && hist.sequencer && hist.sequencer.length >= 2) {
+    state.latencies = hist.sequencer.slice(-60);
+    renderLatency();
+  }
+
+  // ── Infra: Node ──
+  if (local.ms > 0) {
+    document.getElementById('nodeDot').className = 'infra-dot ok';
+    document.getElementById('nodeLabel').textContent = '已同步';
+    document.getElementById('nodeBlock').textContent = local.block ? `#${local.block.toLocaleString()}` : '—';
+  }
+
+  // ── Infra: extra detail ──
+  if (read.ms >= 0) {
+    document.getElementById('feedRate').textContent = `llamarpc ${read.ms}ms`;
+  }
+  if (readArb.ms >= 0) {
+    document.getElementById('feedCount').textContent = `arb1 ${readArb.ms}ms`;
+  }
+  if (seq.ms >= 0) {
+    document.getElementById('feedSeq').textContent = `seq ${seq.ms}ms`;
   }
 }
 
-// Poll every 2 seconds
-setInterval(pollMetrics, 2000);
-pollMetrics();
+// Probe every 2 seconds
+runLatencyProbe();
+setInterval(runLatencyProbe, 2000);
+
+// ─── Infra status (static defaults, overridden by API) ───
+function initInfra() {
+  document.getElementById('nodeDot').className = 'infra-dot warn';
+  document.getElementById('nodeLabel').textContent = '同步中 (快照下载)';
+  document.getElementById('nodeBlock').textContent = '—';
+  document.getElementById('nodeConn').textContent = 'ws://127.0.0.1:8548';
+  document.getElementById('feedDot').className = 'infra-dot ok';
+  document.getElementById('feedLabel').textContent = '可用';
+  document.getElementById('feedRate').textContent = '—';
+  document.getElementById('feedCount').textContent = '—';
+  document.getElementById('feedSeq').textContent = '—';
+  document.getElementById('botDot').className = 'infra-dot err';
+  document.getElementById('botLabel').textContent = '未启动';
+  document.getElementById('botUptime').textContent = '—';
+  document.getElementById('botMode').textContent = 'Dry-Run';
+  document.getElementById('botBlocks').textContent = '0';
+  document.getElementById('botErrors').textContent = '0';
+}
+initInfra();
+
+// ─── API polling (when backend is running) ───
+const API = window.location.origin + '/api';
+
+async function poll() {
+  try {
+    const res = await fetch(API + '/metrics');
+    if (!res.ok) return;
+    const d = await res.json();
+    state.connected = true;
+
+    if (d.total_profit_usd !== undefined) {
+      const net = d.total_profit_usd / 3500;
+      document.getElementById('netProfit').innerHTML = `${net.toFixed(3)}<span class="u">ETH</span>`;
+      document.getElementById('netProfitUsd').textContent = `$${d.total_profit_usd.toFixed(2)}`;
+    }
+    if (d.success_rate !== undefined) {
+      document.getElementById('winRate').innerHTML = `${d.success_rate.toFixed(1)}<span class="u">%</span>`;
+    }
+    if (d.uptime) document.getElementById('botUptime').textContent = d.uptime;
+    if (d.blocks_processed !== undefined) document.getElementById('botBlocks').textContent = d.blocks_processed.toLocaleString();
+    if (d.errors !== undefined) {
+      document.getElementById('botErrors').textContent = d.errors;
+      document.getElementById('botErrors').style.color = d.errors > 0 ? 'var(--red)' : 'var(--text)';
+    }
+
+    const dot = document.getElementById('sDot');
+    const txt = document.getElementById('sText');
+    if (d.status === 'running') { dot.className='dot on'; txt.textContent='运行中'; }
+    else { dot.className='dot warn'; txt.textContent='异常'; }
+    document.getElementById('botDot').className = 'infra-dot ok';
+    document.getElementById('botLabel').textContent = '运行中';
+  } catch {
+    // Backend not running
+  }
+}
+setInterval(poll, 2000);
+poll();
+
+// ─── Chain data polling (liquidations, competitors, near-liquidation) ───
+let chainData = null;
+let knownCompetitors = new Set();
+
+function hfColor(hf) {
+  const v = parseFloat(hf);
+  if (v < 1.0) return 'var(--red)';
+  if (v < 1.1) return 'var(--orange)';
+  return 'var(--text)';
+}
+
+function renderNearLiquidation() {
+  const tbody = document.getElementById('nearLiqBody');
+  const counter = document.getElementById('nearLiqCount');
+  if (!chainData || !chainData.near_liquidation) {
+    counter.textContent = '扫描中...';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">扫描中...</td></tr>';
+    return;
+  }
+  const positions = chainData.near_liquidation;
+  if (!positions.length) {
+    counter.textContent = '暂无危险仓位';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">未发现健康因子 &lt; 1.5 的仓位</td></tr>';
+    return;
+  }
+  counter.textContent = `${positions.length} 个危险仓位`;
+  tbody.innerHTML = positions.map(p => {
+    const color = hfColor(p.health_factor);
+    return `<tr>
+      <td style="font-weight:500">${p.protocol}</td>
+      <td class="mono"><a class="tx-link" href="https://arbiscan.io/address/${p.user_full || ''}" target="_blank">${p.user}</a></td>
+      <td style="font-weight:700;color:${color}">${p.health_factor}</td>
+      <td>${p.collateral_usd}</td>
+      <td>${p.debt_usd}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMarketLiquidations() {
+  const tbody = document.getElementById('mktLiqBody');
+  const counter = document.getElementById('mktLiqCount');
+  if (!chainData || !chainData.market_liquidations) {
+    counter.textContent = '加载中...';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">加载中...</td></tr>';
+    return;
+  }
+  const liqs = chainData.market_liquidations;
+  if (!liqs.length) {
+    counter.textContent = '暂无清算记录';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">近期无链上清算事件</td></tr>';
+    return;
+  }
+  counter.textContent = `最近 ${liqs.length} 笔`;
+  tbody.innerHTML = liqs.map(l => {
+    const isCompetitor = knownCompetitors.has(l.liquidator);
+    const liqStyle = isCompetitor ? 'font-weight:600;color:var(--orange)' : '';
+    const txShort = l.tx_hash ? l.tx_hash.slice(0, 10) + '...' : '--';
+    return `<tr>
+      <td class="mono" style="color:var(--text-secondary);white-space:nowrap">${l.time_ago}</td>
+      <td style="font-weight:500">${l.protocol}</td>
+      <td class="mono">${l.user}</td>
+      <td class="mono" style="${liqStyle}">${l.liquidator}</td>
+      <td>${l.collateral} / ${l.debt}</td>
+      <td style="white-space:nowrap">${l.collateral_amount} ${l.collateral}<br><span style="color:var(--text-secondary);font-size:11px">${l.debt_amount} ${l.debt}</span></td>
+      <td><a class="tx-link" href="https://arbiscan.io/tx/${l.tx_hash}" target="_blank">${txShort}</a></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCompetitors() {
+  const tbody = document.getElementById('compBody');
+  const counter = document.getElementById('compCount');
+  if (!chainData || !chainData.competitors) {
+    counter.textContent = '加载中...';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">加载中...</td></tr>';
+    return;
+  }
+  const comps = chainData.competitors;
+  if (!comps.length) {
+    counter.textContent = '暂无数据';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px 0;color:var(--text-tertiary);">未发现竞争对手</td></tr>';
+    return;
+  }
+  // Update known competitors set
+  knownCompetitors.clear();
+  comps.forEach(c => knownCompetitors.add(c.short));
+
+  counter.textContent = `${comps.length} 个清算机器人`;
+  const medals = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
+  tbody.innerHTML = comps.map((c, i) => {
+    const rank = i < 3 ? medals[i] : `${i + 1}`;
+    const protocols = c.protocols.map(p => `<span class="pill sim" style="margin-right:4px;">${p}</span>`).join('');
+    const blockText = c.last_block ? `#${c.last_block.toLocaleString()}` : '--';
+    return `<tr>
+      <td style="text-align:center;font-size:16px;">${rank}</td>
+      <td class="mono"><a class="tx-link" href="https://arbiscan.io/address/${c.address}" target="_blank">${c.short}</a></td>
+      <td style="font-weight:600">${c.count}</td>
+      <td>${protocols}</td>
+      <td class="mono" style="color:var(--text-secondary)">${blockText}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function pollChainData() {
+  try {
+    const res = await fetch('/api/chain');
+    if (!res.ok) return;
+    chainData = await res.json();
+    renderNearLiquidation();
+    renderMarketLiquidations();
+    renderCompetitors();
+  } catch {
+    // Chain data not available yet
+  }
+}
+
+pollChainData();
+setInterval(pollChainData, 10000);
 </script>
 
 </body>

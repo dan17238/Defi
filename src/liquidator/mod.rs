@@ -123,9 +123,11 @@ impl<P: Provider + Clone + Send + Sync> Liquidator<P> {
         }
 
         // Build and send the transaction
+        // min_profit is set to 0 for now — the simulation already verified profitability
         let calldata = flash_loan::encode_flash_liquidation(
             opportunity,
             self.flash_liquidator_address,
+            alloy::primitives::U256::ZERO,
         );
 
         match self

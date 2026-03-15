@@ -51,7 +51,11 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         );
 
         // Encode the flash liquidation call
-        let calldata = flash_loan::encode_flash_liquidation(opportunity, flash_liquidator);
+        let calldata = flash_loan::encode_flash_liquidation(
+            opportunity,
+            flash_liquidator,
+            alloy::primitives::U256::ZERO,
+        );
 
         // Build the revm database:
         // AlloyDB (async, fetches state from RPC on cache miss)
