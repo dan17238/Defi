@@ -1,0 +1,27 @@
+[package]
+name = "arbitrum-liquidator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy = { version = "1.7", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+revm = { version = "36", features = ["std", "serde-json", "alloydb"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+eyre = "0.6"
+color-eyre = "0.6"
+dashmap = "6"
+futures = "0.3"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+serde_json = "1"
+chrono = "0.4"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

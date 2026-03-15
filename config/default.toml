@@ -1,0 +1,46 @@
+[rpc]
+# Use remote RPC during development, switch to local after node sync
+http_url = "https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
+ws_url = "wss://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
+# Local node (after sync)
+# http_url = "http://127.0.0.1:8547"
+# ws_url = "ws://127.0.0.1:8548"
+
+[wallet]
+private_key_env = "LIQUIDATOR_PRIVATE_KEY"
+
+[contracts]
+flash_liquidator = "0x0000000000000000000000000000000000000000"
+
+[protocols.aave_v3]
+enabled = true
+pool = "0x794a61358D6845594F94dc1DB02A252b5b4814aD"
+data_provider = "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654"
+min_profit_usd = 1.0
+
+[protocols.radiant]
+enabled = true
+pool = "0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1"
+data_provider = "0x2f9D57E97C3DFED8676e605BC504a48E0c5917E9"
+min_profit_usd = 1.0
+
+[protocols.silo]
+enabled = false
+lens = "0x0000000000000000000000000000000000000000"
+repository = "0x0000000000000000000000000000000000000000"
+min_profit_usd = 1.0
+
+[execution]
+dry_run = true
+max_gas_price_gwei = 1.0
+min_profit_usd = 0.5
+multicall_batch_size = 100
+
+[sequencer]
+feed_url = "wss://arb1.arbitrum.io/feed"
+rpc_url = "https://arb1-sequencer.arbitrum.io/rpc"
+
+[monitoring]
+metrics_port = 9090
+dashboard_port = 3000
+log_level = "info"

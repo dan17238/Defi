@@ -1,0 +1,19 @@
+# Rust
+target/
+Cargo.lock
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/lib/
+
+# Environment
+.env
+*.pem
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
