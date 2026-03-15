@@ -25,10 +25,13 @@ pub async fn start_dashboard(metrics: Metrics, port: u16) -> eyre::Result<()> {
         .route("/", get(serve_dashboard))
         .route("/api/metrics", get(api_metrics))
         .route("/api/health", get(api_health))
+        .route("/api/latency", get(api_latency_stub))
+        .route("/api/chain", get(api_chain_stub))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    // Bind to 127.0.0.1 by default for security (use SSH tunnel for remote access)
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     info!(%addr, "Dashboard server starting");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -50,4 +53,23 @@ async fn api_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// Simple health check endpoint.
 async fn api_health() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+/// Stub for /api/latency — the Python dashboard server provides the real implementation.
+/// This prevents 404s when the Rust bot serves the dashboard directly.
+async fn api_latency_stub() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "probes": {},
+        "history": {"read": [], "sequencer": [], "total": []}
+    }))
+}
+
+/// Stub for /api/chain — the Python dashboard server provides the real implementation.
+async fn api_chain_stub() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "market_liquidations": [],
+        "competitors": [],
+        "near_liquidation": [],
+        "last_updated": 0
+    }))
 }

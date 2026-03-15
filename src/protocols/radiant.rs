@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
@@ -9,6 +11,10 @@ use crate::protocols::{LiquidationOpportunity, Protocol};
 use crate::provider;
 use crate::state::position_tracker::PositionTracker;
 use crate::utils::multicall::Multicall;
+
+/// Cached ETH price in USD cents (e.g., 350000 = $3500.00).
+/// Updated periodically from Chainlink oracle. Public so simulator can use it.
+pub static CACHED_ETH_PRICE_CENTS: AtomicU64 = AtomicU64::new(350_000); // default $3500
 
 // --------------------------------------------------------------------------
 // Radiant ABI definitions (AAVE v2 fork)
@@ -63,6 +69,13 @@ sol! {
             address tokenAddress;
         }
     }
+
+    /// Chainlink ETH/USD price feed on Arbitrum
+    #[sol(rpc)]
+    interface IChainlinkAggregator {
+        function latestAnswer() external view returns (int256);
+        function decimals() external view returns (uint8);
+    }
 }
 
 /// Radiant protocol monitor.
@@ -77,6 +90,9 @@ pub struct RadiantProtocol<P> {
     position_tracker: PositionTracker,
     multicall_batch_size: usize,
 }
+
+/// Chainlink ETH/USD price feed on Arbitrum
+const CHAINLINK_ETH_USD: &str = "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612";
 
 impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     pub fn new(
@@ -99,6 +115,39 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     /// Returns a reference to the internal position tracker.
     pub fn position_tracker(&self) -> &PositionTracker {
         &self.position_tracker
+    }
+
+    /// Fetch ETH/USD price from Chainlink oracle and cache it.
+    async fn refresh_eth_price(&self) {
+        let feed_addr: Address = CHAINLINK_ETH_USD.parse().expect("valid chainlink address");
+        // Use raw eth_call instead of sol! contract instance to avoid type issues
+        let calldata = alloy::primitives::Bytes::from(
+            alloy::primitives::hex::decode("50d25bcd").unwrap() // latestAnswer() selector
+        );
+        let tx = alloy::rpc::types::TransactionRequest::default()
+            .to(feed_addr)
+            .input(alloy::rpc::types::TransactionInput::new(calldata));
+        match self.provider.call(tx).await {
+            Ok(result) => {
+                if result.len() >= 32 {
+                    // Decode int256 (Chainlink returns price with 8 decimals)
+                    let price_raw = U256::from_be_slice(&result[..32]);
+                    let price_cents = (price_raw / U256::from(1_000_000)).to::<u64>();
+                    if price_cents > 0 {
+                        CACHED_ETH_PRICE_CENTS.store(price_cents, Ordering::Relaxed);
+                        debug!(eth_price_usd = price_cents as f64 / 100.0, "Updated ETH price from Chainlink");
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to fetch ETH price from Chainlink, using cached value");
+            }
+        }
+    }
+
+    /// Get the cached ETH price in USD.
+    fn eth_price_usd() -> f64 {
+        CACHED_ETH_PRICE_CENTS.load(Ordering::Relaxed) as f64 / 100.0
     }
 
     /// Fetch the list of all active reserves from the Radiant LendingPool.
@@ -228,10 +277,10 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
 
         // Profit estimate using totalDebtETH from getUserAccountData.
         // totalDebtETH is denominated in ETH (18 decimals). Convert to USD
-        // using a rough ETH price estimate (~$3000).
+        // using Chainlink oracle price.
         let estimated_bonus_bps: f64 = 500.0;
         let debt_eth = total_debt_eth.to::<u128>() as f64 / 1e18;
-        let eth_price_usd = 3000.0; // rough estimate; a production bot would use an oracle
+        let eth_price_usd = Self::eth_price_usd();
         let debt_usd = debt_eth * eth_price_usd;
         let estimated_profit_usd = debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
 
@@ -319,6 +368,9 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
             block = block_number,
             "Scanning Radiant for liquidatable positions"
         );
+
+        // Refresh ETH price from Chainlink before scanning
+        self.refresh_eth_price().await;
 
         let borrowers = self.position_tracker.get_all_borrowers();
         if borrowers.is_empty() {
