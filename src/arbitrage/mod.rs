@@ -310,7 +310,7 @@ where
                 return Ok(());
             }
         };
-        let calldata = self.encode_arb_calldata(opp, min_profit_tokens);
+        let calldata = self.encode_arb_calldata(opp, min_profit_tokens)?;
 
         // Simulate via revm
         let sim_result = self
@@ -378,15 +378,17 @@ where
     }
 
     /// Encode calldata — uses executeMultiHop for all routes (including 2-pool).
-    fn encode_arb_calldata(&self, opp: &ArbitrageOpportunity, min_profit: U256) -> Bytes {
+    fn encode_arb_calldata(&self, opp: &ArbitrageOpportunity, min_profit: U256) -> Result<Bytes> {
+        let amount_in = I256::try_from(opp.amount_in)
+            .map_err(|_| eyre::eyre!("amount_in {} overflows I256", opp.amount_in))?;
         let params = IFlashArbitrage::MultiHopParams {
             pools: opp.pools.clone(),
             zeroForOne: opp.zero_for_one.clone(),
-            amountIn: I256::try_from(opp.amount_in).unwrap_or(I256::ZERO),
+            amountIn: amount_in,
             minProfit: min_profit,
         };
         let call = IFlashArbitrage::executeMultiHopCall { params };
-        Bytes::from(call.abi_encode())
+        Ok(Bytes::from(call.abi_encode()))
     }
 
     /// Compute minimum profit in token units from config USD threshold.
@@ -549,7 +551,7 @@ where
         pair_name: String,
         expected_profit_usd: f64,
     ) -> Result<FixedBytes<32>> {
-        let gas_price_wei = (gas_price_gwei * 1e9) as u128;
+        let gas_price_wei = (gas_price_gwei * 1e9).round() as u128;
 
         let tx_request = TransactionRequest::default()
             .to(self.flash_arb_contract)
@@ -945,7 +947,7 @@ fn estimate_net_profit_after_gas(
     max_gwei: f64,
 ) -> (f64, f64) {
     let selected_gas_price_gwei = select_gas_price(gross_profit_usd, max_gwei);
-    let gas_price_wei = (selected_gas_price_gwei * 1e9) as u128;
+    let gas_price_wei = (selected_gas_price_gwei * 1e9).round() as u128;
     let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
         .load(std::sync::atomic::Ordering::Relaxed) as f64
         / 100.0;

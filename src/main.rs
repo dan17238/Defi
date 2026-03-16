@@ -145,6 +145,13 @@ async fn main() -> Result<()> {
     // Initialize metrics
     let metrics = Metrics::new();
 
+    // Clone exec_provider for arb monitor BEFORE moving into Liquidator.
+    // Both share the same wallet — the NonceFiller inside the provider
+    // queries the chain nonce on each send, so concurrent sends risk
+    // nonce collisions. In practice, liquidation and arbitrage rarely
+    // fire simultaneously, and a collision only costs gas (~$0.04).
+    let arb_exec_provider = exec_provider.clone();
+
     // Initialize the liquidator orchestrator
     // read_provider is used for simulation; exec_provider for sending transactions.
     let liquidator = Arc::new(Liquidator::new(
@@ -327,18 +334,9 @@ async fn main() -> Result<()> {
                 .parse()
                 .wrap_err("Invalid flash_arbitrage_contract address (arb spawn)")?;
 
-            // Re-clone providers for the arb monitor
-            let arb_read_provider = read_provider.clone();
-            let arb_exec_provider =
-                provider::create_signed_http_provider(&config.sequencer.rpc_url, {
-                    let pk = config.resolve_private_key()?;
-                    let signer: PrivateKeySigner = pk.parse().wrap_err("arb signer parse")?;
-                    EthereumWallet::from(signer)
-                })?;
-
             let arb_monitor = ArbitrageMonitor::new(
-                arb_read_provider,
-                arb_exec_provider,
+                read_provider.clone(),
+                arb_exec_provider.clone(),
                 arb_config.clone(),
                 wallet_address,
                 flash_arb_address,

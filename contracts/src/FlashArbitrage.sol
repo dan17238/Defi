@@ -48,6 +48,7 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     // =========================================================================
 
     address public owner;
+    address public pendingOwner;
 
     /// @dev Reentrancy + execution context
     bool private _executing;
@@ -205,6 +206,18 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     //                         ADMIN FUNCTIONS
     // =========================================================================
 
+    /// @notice Initiate 2-step ownership transfer
+    function transferOwnership(address newOwner) external onlyOwner {
+        pendingOwner = newOwner;
+    }
+
+    /// @notice Accept ownership (must be called by pendingOwner)
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert OnlyOwner();
+        owner = pendingOwner;
+        pendingOwner = address(0);
+    }
+
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
         uint256 balance = IERC20(token).balanceOf(address(this));
         uint256 withdrawAmount = amount > balance ? balance : amount;
@@ -235,7 +248,7 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     ///      - Step 0 (after unwind): collect profit and send to owner
     function _handleMultiHopCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
         uint256 step = abi.decode(data, (uint256));
-        if (msg.sender != _hops[step]) revert InvalidCallback();
+        if (step >= _hopCount || msg.sender != _hops[step]) revert InvalidCallback();
 
         // Determine what we owe and what we received
         address token0 = IUniswapV3Pool(msg.sender).token0();
