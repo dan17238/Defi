@@ -25,6 +25,8 @@ sol! {
 }
 
 const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = LiquidationExecuted::SIGNATURE_HASH;
+const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const RECEIPT_MAX_POLLS: usize = 24;
 
 /// Submits liquidation transactions on-chain without blocking for confirmation.
 ///
@@ -111,12 +113,47 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
             .record_latency_us(send_latency.as_micros() as u64);
 
         let metrics = self.metrics.clone();
+        let receipt_provider = self.provider.clone();
         let tx_hash_for_task = tx_hash;
         tokio::spawn(async move {
-            let receipt_result =
-                tokio::time::timeout(Duration::from_secs(45), pending.get_receipt()).await;
-            match receipt_result {
-                Ok(Ok(receipt)) if receipt.status() => {
+            let mut receipt = None;
+            let mut last_error = None;
+
+            for attempt in 1..=RECEIPT_MAX_POLLS {
+                match receipt_provider
+                    .get_transaction_receipt(tx_hash_for_task)
+                    .await
+                {
+                    Ok(Some(found_receipt)) => {
+                        receipt = Some(found_receipt);
+                        break;
+                    }
+                    Ok(None) => {
+                        if attempt == 1 {
+                            debug!(
+                                tx_hash = %tx_hash_for_task,
+                                "Waiting for liquidation receipt confirmation"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        last_error = Some(e.to_string());
+                        warn!(
+                            tx_hash = %tx_hash_for_task,
+                            attempt,
+                            error = %e,
+                            "Receipt polling failed for liquidation tx"
+                        );
+                    }
+                }
+
+                if attempt < RECEIPT_MAX_POLLS {
+                    tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
+                }
+            }
+
+            match receipt {
+                Some(receipt) if receipt.status() => {
                     let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(
                         receipt.gas_used(),
                         receipt.effective_gas_price(),
@@ -137,7 +174,7 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                         "Liquidation tx confirmed"
                     );
                 }
-                Ok(Ok(receipt)) => {
+                Some(receipt) => {
                     metrics.record_error();
                     warn!(
                         tx_hash = %tx_hash_for_task,
@@ -145,20 +182,21 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                         "Liquidation tx reverted on-chain"
                     );
                 }
-                Ok(Err(e)) => {
+                None => {
                     metrics.record_error();
-                    warn!(
-                        tx_hash = %tx_hash_for_task,
-                        error = %e,
-                        "Failed to fetch liquidation receipt"
-                    );
-                }
-                Err(_) => {
-                    metrics.record_error();
-                    warn!(
-                        tx_hash = %tx_hash_for_task,
-                        "Timed out waiting for liquidation receipt"
-                    );
+                    match last_error {
+                        Some(error) => warn!(
+                            tx_hash = %tx_hash_for_task,
+                            error = %error,
+                            attempts = RECEIPT_MAX_POLLS,
+                            "Giving up on liquidation receipt after repeated polling errors/timeouts"
+                        ),
+                        None => warn!(
+                            tx_hash = %tx_hash_for_task,
+                            attempts = RECEIPT_MAX_POLLS,
+                            "Giving up on liquidation receipt after repeated polling with no confirmation"
+                        ),
+                    }
                 }
             }
 

@@ -87,6 +87,8 @@ sol! {
 }
 
 const ARB_EXECUTED_TOPIC: FixedBytes<32> = IFlashArbitrage::ArbitrageExecuted::SIGNATURE_HASH;
+const RECEIPT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const RECEIPT_MAX_POLLS: usize = 24;
 
 // ---------------------------------------------------------------------------
 // ArbitrageMonitor
@@ -697,6 +699,7 @@ where
         let metrics = self.metrics.clone();
         let dash = self.dashboard.clone();
         let inflight = self.inflight.clone();
+        let receipt_provider = self.exec_provider.clone();
         let tx_str = format!("{tx_hash:#x}");
         dash.record_submitted(
             &pair_name,
@@ -706,10 +709,43 @@ where
         );
 
         tokio::spawn(async move {
-            match tokio::time::timeout(std::time::Duration::from_secs(45), pending.get_receipt())
-                .await
-            {
-                Ok(Ok(receipt)) if receipt.status() => {
+            let mut receipt = None;
+            let mut last_error = None;
+
+            for attempt in 1..=RECEIPT_MAX_POLLS {
+                match receipt_provider.get_transaction_receipt(tx_hash).await {
+                    Ok(Some(found_receipt)) => {
+                        receipt = Some(found_receipt);
+                        break;
+                    }
+                    Ok(None) => {
+                        if attempt == 1 {
+                            debug!(
+                                pair = %pair_name,
+                                tx = %tx_hash,
+                                "Waiting for arbitrage receipt confirmation"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        last_error = Some(e.to_string());
+                        warn!(
+                            pair = %pair_name,
+                            tx = %tx_hash,
+                            attempt,
+                            error = %e,
+                            "Receipt polling failed for arbitrage tx"
+                        );
+                    }
+                }
+
+                if attempt < RECEIPT_MAX_POLLS {
+                    tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
+                }
+            }
+
+            match receipt {
+                Some(receipt) if receipt.status() => {
                     let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(
                         receipt.gas_used(),
                         receipt.effective_gas_price(),
@@ -732,18 +768,28 @@ where
                         "Arb tx confirmed"
                     );
                 }
-                Ok(Ok(receipt)) => {
+                Some(receipt) => {
                     metrics.record_error();
                     dash.record_reverted(&pair_name, &tx_str, receipt.gas_used());
                     warn!(pair = %pair_name, tx = %tx_hash, gas_used = receipt.gas_used(), "Arb tx reverted on-chain");
                 }
-                Ok(Err(e)) => {
+                None => {
                     metrics.record_error();
-                    warn!(pair = %pair_name, tx = %tx_hash, error = %e, "Failed to fetch arb receipt");
-                }
-                Err(_) => {
-                    metrics.record_error();
-                    warn!(pair = %pair_name, tx = %tx_hash, "Timed out waiting for arb receipt");
+                    match last_error {
+                        Some(error) => warn!(
+                            pair = %pair_name,
+                            tx = %tx_hash,
+                            error = %error,
+                            attempts = RECEIPT_MAX_POLLS,
+                            "Giving up on arb receipt after repeated polling errors/timeouts"
+                        ),
+                        None => warn!(
+                            pair = %pair_name,
+                            tx = %tx_hash,
+                            attempts = RECEIPT_MAX_POLLS,
+                            "Giving up on arb receipt after repeated polling with no confirmation"
+                        ),
+                    }
                 }
             }
             inflight.remove(&inflight_key);

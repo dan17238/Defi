@@ -144,16 +144,6 @@ where
             return Ok(false);
         }
 
-        let inflight_key = Self::opportunity_key(opportunity);
-        if !self.inflight.insert(inflight_key.clone()) {
-            info!(
-                protocol = %opportunity.protocol,
-                user = %opportunity.user,
-                "Skipping duplicate liquidation while previous tx is still in flight"
-            );
-            return Ok(false);
-        }
-
         // Build and send the transaction
         // Set minProfit to cover: flash loan premium + estimated gas cost + profit margin.
         // The on-chain contract will revert if actual profit is below this threshold.
@@ -192,6 +182,16 @@ where
             self.flash_liquidator_address,
             min_profit,
         );
+
+        let inflight_key = Self::opportunity_key(opportunity);
+        if !self.inflight.insert(inflight_key.clone()) {
+            info!(
+                protocol = %opportunity.protocol,
+                user = %opportunity.user,
+                "Skipping duplicate liquidation while previous tx is still in flight"
+            );
+            return Ok(false);
+        }
 
         match self
             .executor

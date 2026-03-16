@@ -323,28 +323,51 @@ def _fetch_borrow_logs(current_block):
 
 
 def _extract_borrowers(borrow_logs, liquidation_events):
-    """Extract unique (protocol, pool, borrower) triples."""
-    borrowers = set()
+    """Extract unique (protocol, pool, borrower) triples in a stable priority order."""
+    borrowers = []
+    seen = set()
 
-    # From borrow events: topic2 is onBehalfOf (the actual borrower)
-    for log in borrow_logs:
+    def _block_number(value):
+        if isinstance(value, str):
+            try:
+                return int(value, 16)
+            except ValueError:
+                return 0
+        return int(value or 0)
+
+    def _append(protocol, pool, addr):
+        key = (protocol, pool, addr.lower())
+        if key not in seen:
+            seen.add(key)
+            borrowers.append(key)
+
+    # Most recently liquidated users are strongest candidates to watch first.
+    for evt in sorted(liquidation_events, key=lambda x: x.get('block', 0), reverse=True):
+        if evt and evt.get('user_full'):
+            protocol = evt.get('protocol')
+            pool = PROTOCOL_POOLS.get(protocol)
+            if pool:
+                _append(protocol, pool, evt['user_full'])
+
+    # Then fill with the newest borrowers from supported protocols.
+    def _borrow_sort_key(log):
+        return (
+            _block_number(log.get('blockNumber')),
+            _block_number(log.get('transactionIndex')),
+            _block_number(log.get('logIndex')),
+        )
+
+    for log in sorted(borrow_logs, key=_borrow_sort_key, reverse=True):
         topics = log.get('topics', [])
         if len(topics) >= 3:
             addr = _topic_to_address(topics[2])
             protocol = log.get('_protocol', 'AAVE V3')
             pool = log.get('_pool', PROTOCOL_POOLS.get(protocol, AAVE_V3_POOL))
-            borrowers.add((protocol, pool, addr.lower()))
+            _append(protocol, pool, addr)
+        if len(borrowers) >= MAX_BORROWERS:
+            break
 
-    # From liquidation events: the users that were liquidated
-    for evt in liquidation_events:
-        if evt and evt.get('user_full'):
-            protocol = evt.get('protocol')
-            pool = PROTOCOL_POOLS.get(protocol)
-            if pool:
-                borrowers.add((protocol, pool, evt['user_full'].lower()))
-
-    # Limit to MAX_BORROWERS
-    return list(borrowers)[:MAX_BORROWERS]
+    return borrowers[:MAX_BORROWERS]
 
 
 # ─── Multicall for health factors ───
