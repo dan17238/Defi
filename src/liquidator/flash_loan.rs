@@ -50,17 +50,17 @@ sol! {
 /// Map protocol name to on-chain enum value.
 fn protocol_id(name: &str) -> u8 {
     match name {
-        "aave_v3" => 0,  // Protocol.AaveV3
-        "radiant" => 1,  // Protocol.Radiant
-        "silo" => 2,     // Protocol.Silo
+        "aave_v3" => 0, // Protocol.AaveV3
+        "radiant" => 1, // Protocol.Radiant
+        "silo" => 2,    // Protocol.Silo
         _ => 0,
     }
 }
 
 /// Common Uniswap V3 fee tiers.
-pub const FEE_LOW: u32 = 500;      // 0.05% — stablecoin pairs
-pub const FEE_MEDIUM: u32 = 3000;  // 0.30% — most pairs
-pub const FEE_HIGH: u32 = 10000;   // 1.00% — exotic pairs
+pub const FEE_LOW: u32 = 500; // 0.05% — stablecoin pairs
+pub const FEE_MEDIUM: u32 = 3000; // 0.30% — most pairs
+pub const FEE_HIGH: u32 = 10000; // 1.00% — exotic pairs
 
 /// DEX selection.
 pub const DEX_UNISWAP_V3: u8 = 0;
@@ -89,8 +89,13 @@ pub mod tokens {
 
     fn eth_price_usd() -> f64 {
         let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-            .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
-        if eth_price > 100.0 { eth_price } else { 3500.0 }
+            .load(std::sync::atomic::Ordering::Relaxed) as f64
+            / 100.0;
+        if eth_price > 100.0 {
+            eth_price
+        } else {
+            3500.0
+        }
     }
 
     /// Token info: (decimals, approximate USD price).

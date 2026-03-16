@@ -23,7 +23,10 @@ const MAX_SPREAD_HISTORY: usize = 500;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ArbPairSnapshot {
+    pub kind: String,
     pub name: String,
+    pub hop_count: usize,
+    pub path: String,
     pub pool_a: String,
     pub pool_b: String,
     pub price_a: f64,
@@ -101,7 +104,11 @@ impl ArbDashboard {
         self.push_event(ArbEvent {
             ts: Self::now_ms(),
             pair: pair.to_string(),
-            kind: if reverted { "skipped".to_string() } else { "simulated".to_string() },
+            kind: if reverted {
+                "skipped".to_string()
+            } else {
+                "simulated".to_string()
+            },
             spread_bps: 0.0,
             profit_usd,
             gas_used,

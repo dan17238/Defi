@@ -72,7 +72,10 @@ impl PoolStateCache {
             calls.push((*addr, IUniV3Pool::liquidityCall {}.abi_encode()));
         }
 
-        let results = mc.aggregate3(calls).await.wrap_err("Pool state init multicall failed")?;
+        let results = mc
+            .aggregate3(calls)
+            .await
+            .wrap_err("Pool state init multicall failed")?;
 
         for (i, addr) in self.pool_addresses.iter().enumerate() {
             let base = i * 5;
@@ -82,65 +85,76 @@ impl PoolStateCache {
                 continue;
             }
 
-            if !results[base].success || !results[base + 1].success
-                || !results[base + 2].success || !results[base + 3].success
+            if !results[base].success
+                || !results[base + 1].success
+                || !results[base + 2].success
+                || !results[base + 3].success
                 || !results[base + 4].success
             {
                 warn!(pool = %addr, "Failed to read pool state, skipping");
                 continue;
             }
 
-            let token0: Address = match IUniV3Pool::token0Call::abi_decode_returns(&results[base].return_data) {
-                Ok(ret) => ret,
-                Err(e) => {
-                    warn!(pool = %addr, error = %e, "Failed to decode token0");
-                    continue;
-                }
-            };
+            let token0: Address =
+                match IUniV3Pool::token0Call::abi_decode_returns(&results[base].return_data) {
+                    Ok(ret) => ret,
+                    Err(e) => {
+                        warn!(pool = %addr, error = %e, "Failed to decode token0");
+                        continue;
+                    }
+                };
 
-            let token1: Address = match IUniV3Pool::token1Call::abi_decode_returns(&results[base + 1].return_data) {
-                Ok(ret) => ret,
-                Err(e) => {
-                    warn!(pool = %addr, error = %e, "Failed to decode token1");
-                    continue;
-                }
-            };
+            let token1: Address =
+                match IUniV3Pool::token1Call::abi_decode_returns(&results[base + 1].return_data) {
+                    Ok(ret) => ret,
+                    Err(e) => {
+                        warn!(pool = %addr, error = %e, "Failed to decode token1");
+                        continue;
+                    }
+                };
 
-            let fee: u32 = match IUniV3Pool::feeCall::abi_decode_returns(&results[base + 2].return_data) {
-                Ok(ret) => ret.to::<u32>(),
-                Err(e) => {
-                    warn!(pool = %addr, error = %e, "Failed to decode fee");
-                    continue;
-                }
-            };
+            let fee: u32 =
+                match IUniV3Pool::feeCall::abi_decode_returns(&results[base + 2].return_data) {
+                    Ok(ret) => ret.to::<u32>(),
+                    Err(e) => {
+                        warn!(pool = %addr, error = %e, "Failed to decode fee");
+                        continue;
+                    }
+                };
 
-            let slot0 = match IUniV3Pool::slot0Call::abi_decode_returns(&results[base + 3].return_data) {
-                Ok(ret) => ret,
-                Err(e) => {
-                    warn!(pool = %addr, error = %e, "Failed to decode slot0");
-                    continue;
-                }
-            };
+            let slot0 =
+                match IUniV3Pool::slot0Call::abi_decode_returns(&results[base + 3].return_data) {
+                    Ok(ret) => ret,
+                    Err(e) => {
+                        warn!(pool = %addr, error = %e, "Failed to decode slot0");
+                        continue;
+                    }
+                };
 
-            let liquidity: u128 = match IUniV3Pool::liquidityCall::abi_decode_returns(&results[base + 4].return_data) {
-                Ok(ret) => ret,
-                Err(e) => {
-                    warn!(pool = %addr, error = %e, "Failed to decode liquidity");
-                    continue;
-                }
-            };
+            let liquidity: u128 =
+                match IUniV3Pool::liquidityCall::abi_decode_returns(&results[base + 4].return_data)
+                {
+                    Ok(ret) => ret,
+                    Err(e) => {
+                        warn!(pool = %addr, error = %e, "Failed to decode liquidity");
+                        continue;
+                    }
+                };
 
             let sqrt_price_x96 = U256::from(slot0.sqrtPriceX96);
             let tick = slot0.tick.unchecked_into();
 
-            self.states.insert(*addr, UniV3PoolState {
-                sqrt_price_x96,
-                tick,
-                liquidity,
-                fee,
-                token0,
-                token1,
-            });
+            self.states.insert(
+                *addr,
+                UniV3PoolState {
+                    sqrt_price_x96,
+                    tick,
+                    liquidity,
+                    fee,
+                    token0,
+                    token1,
+                },
+            );
 
             debug!(
                 pool = %addr,
@@ -166,7 +180,10 @@ impl PoolStateCache {
             calls.push((*addr, IUniV3Pool::liquidityCall {}.abi_encode()));
         }
 
-        let results = mc.aggregate3(calls).await.wrap_err("Pool state refresh multicall failed")?;
+        let results = mc
+            .aggregate3(calls)
+            .await
+            .wrap_err("Pool state refresh multicall failed")?;
 
         for (i, addr) in self.pool_addresses.iter().enumerate() {
             let base = i * 2;
@@ -174,7 +191,8 @@ impl PoolStateCache {
                 continue;
             }
 
-            let slot0 = match IUniV3Pool::slot0Call::abi_decode_returns(&results[base].return_data) {
+            let slot0 = match IUniV3Pool::slot0Call::abi_decode_returns(&results[base].return_data)
+            {
                 Ok(ret) => ret,
                 Err(_) => continue,
             };

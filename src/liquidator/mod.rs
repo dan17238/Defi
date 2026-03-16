@@ -58,10 +58,7 @@ where
     /// 1. Simulate the liquidation using revm to verify profitability.
     /// 2. If simulation succeeds and profit exceeds threshold, execute on-chain.
     /// 3. Log and record metrics for the outcome.
-    pub async fn process_opportunity(
-        &self,
-        opportunity: &LiquidationOpportunity,
-    ) -> Result<bool> {
+    pub async fn process_opportunity(&self, opportunity: &LiquidationOpportunity) -> Result<bool> {
         info!(
             protocol = %opportunity.protocol,
             user = %opportunity.user,
@@ -247,8 +244,7 @@ where
 
         info!(
             total_opportunities = total,
-            executed,
-            "Batch processing complete"
+            executed, "Batch processing complete"
         );
 
         Ok(executed)

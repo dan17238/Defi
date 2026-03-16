@@ -21,10 +21,7 @@ pub struct Executor<P> {
 
 impl<P: Provider + Clone + Send + Sync> Executor<P> {
     pub fn new(provider: P, metrics: Metrics) -> Self {
-        Self {
-            provider,
-            metrics,
-        }
+        Self { provider, metrics }
     }
 
     /// Build, sign, and send a transaction to the flash liquidator contract.
@@ -87,7 +84,8 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
             latency_ms = send_latency.as_millis() as u64,
             "Transaction submitted to Sequencer (not waiting for receipt)"
         );
-        self.metrics.record_latency_us(send_latency.as_micros() as u64);
+        self.metrics
+            .record_latency_us(send_latency.as_micros() as u64);
 
         // Do NOT wait for the receipt. The simulation already verified
         // profitability, and the flash loan is atomic — on-chain revert only
@@ -98,11 +96,7 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
     }
 
     /// Estimate gas for a liquidation call without sending it.
-    pub async fn estimate_gas(
-        &self,
-        to: Address,
-        calldata: Bytes,
-    ) -> Result<u64> {
+    pub async fn estimate_gas(&self, to: Address, calldata: Bytes) -> Result<u64> {
         let tx_request = alloy::rpc::types::TransactionRequest::default()
             .to(to)
             .input(alloy::rpc::types::TransactionInput::new(calldata));

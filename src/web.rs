@@ -20,8 +20,15 @@ pub struct AppState {
 }
 
 /// Start the dashboard web server on the given port.
-pub async fn start_dashboard(metrics: Metrics, arb_dashboard: ArbDashboard, port: u16) -> eyre::Result<()> {
-    let state = Arc::new(AppState { metrics, arb_dashboard });
+pub async fn start_dashboard(
+    metrics: Metrics,
+    arb_dashboard: ArbDashboard,
+    port: u16,
+) -> eyre::Result<()> {
+    let state = Arc::new(AppState {
+        metrics,
+        arb_dashboard,
+    });
 
     let app = Router::new()
         .route("/", get(serve_dashboard))

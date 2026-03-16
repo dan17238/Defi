@@ -6,9 +6,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IUniswapV3Pool, IUniswapV3SwapCallback} from "./interfaces/IUniswapV3Pool.sol";
 
 /// @title FlashArbitrage
-/// @notice Executes atomic UniV3 flash swap arbitrage between two pools with the same token pair.
-/// @dev Uses nested callbacks: poolA.swap() → callback → poolB.swap() → callback.
-///      The contract distinguishes callbacks via stored _arbPoolA address.
+/// @notice Executes atomic UniV3 flash swap arbitrage — supports 2-pool and multi-hop (N-pool) routes.
+/// @dev Multi-hop uses nested callbacks: pool[0].swap() → callback → pool[1].swap() → ... → pool[N-1].
+///      Each callback knows its step index via abi-encoded data. The route must be circular:
+///      the last pool's output token must equal what pool[0] wants back.
 contract FlashArbitrage is IUniswapV3SwapCallback {
     using SafeERC20 for IERC20;
 
@@ -16,52 +17,58 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     //                              CONSTANTS
     // =========================================================================
 
-    /// @dev UniV3 MIN_SQRT_RATIO + 1 (used as "no limit" for zeroForOne=true swaps)
     uint160 private constant MIN_SQRT_RATIO_PLUS_ONE = 4295128740;
+    uint160 private constant MAX_SQRT_RATIO_MINUS_ONE = 1461446703485210103287273052203988822378723970341;
 
-    /// @dev UniV3 MAX_SQRT_RATIO - 1 (used as "no limit" for zeroForOne=false swaps)
-    uint160 private constant MAX_SQRT_RATIO_MINUS_ONE =
-        1461446703485210103287273052203988822378723970341;
+    uint256 private constant MAX_HOPS = 8;
 
     // =========================================================================
     //                              STRUCTS
     // =========================================================================
 
-    /// @notice Parameters for an arbitrage operation
+    /// @notice Parameters for a 2-pool arbitrage (legacy, kept for backward compatibility)
     struct ArbParams {
-        address poolA; // First pool (flash swap source)
-        address poolB; // Second pool (counter-trade)
-        bool zeroForOne; // Swap direction on poolA (reversed on poolB)
-        int256 amountIn; // Amount to swap on poolA (positive = exact input)
-        uint256 minProfit; // Minimum profit required (in profit token units)
+        address poolA;
+        address poolB;
+        bool zeroForOne;
+        int256 amountIn;
+        uint256 minProfit;
+    }
+
+    /// @notice Parameters for a multi-hop arbitrage route
+    struct MultiHopParams {
+        address[] pools; // Ordered list of pools (length >= 2, <= MAX_HOPS)
+        bool[] zeroForOne; // Swap direction for each pool
+        int256 amountIn; // Amount to flash swap on pools[0]
+        uint256 minProfit; // Minimum profit in the "owed" token of pools[0]
     }
 
     // =========================================================================
     //                              STATE
     // =========================================================================
 
-    /// @notice Owner of the contract (receives profits, can withdraw)
     address public owner;
 
-    /// @dev Reentrancy guard
+    /// @dev Reentrancy + execution context
     bool private _executing;
 
-    /// @dev Pool A address for the current arbitrage (distinguishes callbacks)
+    /// @dev 2-pool state (legacy)
     address private _arbPoolA;
-
-    /// @dev Pool B address for the current arbitrage (validates second callback)
     address private _arbPoolB;
+
+    /// @dev Multi-hop state: pool addresses and directions stored during execution
+    mapping(uint256 => address) private _hops;
+    mapping(uint256 => bool) private _hopZeroForOne;
+    uint256 private _hopCount;
+    uint256 private _minProfit;
+    address private _profitToken;
+    uint256 private _profitBalanceBefore;
 
     // =========================================================================
     //                              EVENTS
     // =========================================================================
 
-    event ArbitrageExecuted(
-        address indexed poolA,
-        address indexed poolB,
-        address tokenProfit,
-        uint256 profit
-    );
+    event ArbitrageExecuted(address indexed poolFirst, address indexed poolLast, address tokenProfit, uint256 profit);
 
     event EmergencyWithdraw(address indexed token, uint256 amount);
 
@@ -74,6 +81,7 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     error InvalidCallback();
     error InvalidAmount();
     error InvalidPoolPair();
+    error InvalidRoute();
     error InsufficientProfit(uint256 actual, uint256 required);
 
     // =========================================================================
@@ -97,8 +105,7 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     //                         EXTERNAL FUNCTIONS
     // =========================================================================
 
-    /// @notice Execute an atomic arbitrage between two UniV3 pools
-    /// @param params The arbitrage parameters
+    /// @notice Execute an atomic arbitrage between two UniV3 pools (legacy)
     function executeArbitrage(ArbParams calldata params) external onlyOwner {
         if (_executing) revert Reentrancy();
         if (params.amountIn <= 0) revert InvalidAmount();
@@ -114,35 +121,76 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         _arbPoolA = params.poolA;
         _arbPoolB = params.poolB;
 
-        uint160 sqrtPriceLimit = params.zeroForOne
-            ? MIN_SQRT_RATIO_PLUS_ONE
-            : MAX_SQRT_RATIO_MINUS_ONE;
+        uint160 sqrtPriceLimit = params.zeroForOne ? MIN_SQRT_RATIO_PLUS_ONE : MAX_SQRT_RATIO_MINUS_ONE;
 
-        // Initiate flash swap on poolA. The pool transfers output tokens first,
-        // then calls uniswapV3SwapCallback where we execute the counter-trade.
-        IUniswapV3Pool(params.poolA).swap(
-            address(this),
-            params.zeroForOne,
-            params.amountIn,
-            sqrtPriceLimit,
-            abi.encode(params)
-        );
+        IUniswapV3Pool(params.poolA)
+            .swap(address(this), params.zeroForOne, params.amountIn, sqrtPriceLimit, abi.encode(params));
 
         _arbPoolA = address(0);
         _arbPoolB = address(0);
         _executing = false;
     }
 
-    /// @notice UniV3 swap callback — handles both poolA (first layer) and poolB (second layer)
-    /// @dev msg.sender == _arbPoolA: first callback from poolA, execute counter-trade on poolB
-    ///      msg.sender == _arbPoolB: second callback from poolB, pay poolB its owed tokens
-    function uniswapV3SwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external override {
+    /// @notice Execute a multi-hop arbitrage across N UniV3 pools
+    /// @dev The route must be circular: the token pool[0] wants back must be the
+    ///      same token pool[N-1] outputs. All intermediate tokens flow automatically.
+    /// @param params The multi-hop parameters
+    function executeMultiHop(MultiHopParams calldata params) external onlyOwner {
+        if (_executing) revert Reentrancy();
+        if (params.amountIn <= 0) revert InvalidAmount();
+        uint256 n = params.pools.length;
+        if (n < 2 || n > MAX_HOPS) revert InvalidRoute();
+        if (params.zeroForOne.length != n) revert InvalidRoute();
+
+        _executing = true;
+        _hopCount = n;
+        _minProfit = params.minProfit;
+
+        address token0 = IUniswapV3Pool(params.pools[0]).token0();
+        address token1 = IUniswapV3Pool(params.pools[0]).token1();
+        _profitToken = params.zeroForOne[0] ? token0 : token1;
+        _profitBalanceBefore = IERC20(_profitToken).balanceOf(address(this));
+
+        for (uint256 i = 0; i < n; i++) {
+            _hops[i] = params.pools[i];
+            _hopZeroForOne[i] = params.zeroForOne[i];
+        }
+
+        uint160 limit = params.zeroForOne[0] ? MIN_SQRT_RATIO_PLUS_ONE : MAX_SQRT_RATIO_MINUS_ONE;
+
+        // Initiate flash swap on pool[0]. The nested callback chain handles the rest.
+        IUniswapV3Pool(params.pools[0])
+            .swap(
+                address(this),
+                params.zeroForOne[0],
+                params.amountIn,
+                limit,
+                abi.encode(uint256(0)) // step = 0
+            );
+
+        // Cleanup
+        for (uint256 i = 0; i < n; i++) {
+            _hops[i] = address(0);
+            _hopZeroForOne[i] = false;
+        }
+        _hopCount = 0;
+        _minProfit = 0;
+        _profitToken = address(0);
+        _profitBalanceBefore = 0;
+        _executing = false;
+    }
+
+    /// @notice UniV3 swap callback — routes to legacy 2-pool or multi-hop handler
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external override {
         if (!_executing) revert InvalidCallback();
 
+        // Multi-hop path: _hopCount > 0 means we're in executeMultiHop
+        if (_hopCount > 0) {
+            _handleMultiHopCallback(amount0Delta, amount1Delta, data);
+            return;
+        }
+
+        // Legacy 2-pool path
         if (msg.sender == _arbPoolA) {
             ArbParams memory params = abi.decode(data, (ArbParams));
             _handlePoolACallback(amount0Delta, amount1Delta, params);
@@ -157,7 +205,6 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     //                         ADMIN FUNCTIONS
     // =========================================================================
 
-    /// @notice Emergency withdraw any ERC-20 token stuck in the contract
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
         uint256 balance = IERC20(token).balanceOf(address(this));
         uint256 withdrawAmount = amount > balance ? balance : amount;
@@ -167,7 +214,6 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         }
     }
 
-    /// @notice Emergency withdraw native ETH stuck in the contract
     function emergencyWithdrawETH() external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance > 0) {
@@ -177,71 +223,107 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         }
     }
 
-    /// @notice Allow contract to receive ETH
     receive() external payable {}
 
     // =========================================================================
-    //                        INTERNAL FUNCTIONS
+    //                   MULTI-HOP INTERNAL FUNCTIONS
     // =========================================================================
 
-    /// @dev First-layer callback: called by poolA after it sends us output tokens.
-    ///      We counter-trade on poolB and pay back poolA, keeping the profit.
-    function _handlePoolACallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        ArbParams memory params
-    ) internal {
+    /// @dev Handle callback for any step in a multi-hop route.
+    ///      - Non-final step: swap received tokens on the next pool, then pay current pool
+    ///      - Final step: pay current pool with tokens we have
+    ///      - Step 0 (after unwind): collect profit and send to owner
+    function _handleMultiHopCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
+        uint256 step = abi.decode(data, (uint256));
+        if (msg.sender != _hops[step]) revert InvalidCallback();
+
+        // Determine what we owe and what we received
+        address token0 = IUniswapV3Pool(msg.sender).token0();
+        address token1 = IUniswapV3Pool(msg.sender).token1();
+
+        address tokenOwed;
+        uint256 amountOwed;
+        uint256 amountReceived;
+
+        if (amount0Delta > 0) {
+            tokenOwed = token0;
+            amountOwed = uint256(amount0Delta);
+            amountReceived = uint256(-amount1Delta);
+        } else {
+            tokenOwed = token1;
+            amountOwed = uint256(amount1Delta);
+            amountReceived = uint256(-amount0Delta);
+        }
+
+        if (step < _hopCount - 1) {
+            // Continue chain: swap received tokens on next pool
+            uint256 nextStep = step + 1;
+            bool nextZeroForOne = _hopZeroForOne[nextStep];
+            uint160 limit = nextZeroForOne ? MIN_SQRT_RATIO_PLUS_ONE : MAX_SQRT_RATIO_MINUS_ONE;
+
+            IUniswapV3Pool(_hops[nextStep])
+                .swap(address(this), nextZeroForOne, int256(amountReceived), limit, abi.encode(nextStep));
+
+            // After nested chain returns, pay this pool
+            IERC20(tokenOwed).safeTransfer(msg.sender, amountOwed);
+        } else {
+            // Last hop: just pay with tokens we have
+            IERC20(tokenOwed).safeTransfer(msg.sender, amountOwed);
+        }
+
+        // At step 0: everything has unwound — collect profit
+        if (step == 0) {
+            if (tokenOwed != _profitToken) revert InvalidRoute();
+
+            uint256 balanceAfter = IERC20(_profitToken).balanceOf(address(this));
+            uint256 profit = balanceAfter > _profitBalanceBefore ? balanceAfter - _profitBalanceBefore : 0;
+            if (profit < _minProfit) revert InsufficientProfit(profit, _minProfit);
+
+            if (profit > 0) {
+                IERC20(_profitToken).safeTransfer(owner, profit);
+            }
+
+            emit ArbitrageExecuted(_hops[0], _hops[_hopCount - 1], _profitToken, profit);
+        }
+    }
+
+    // =========================================================================
+    //                   LEGACY 2-POOL INTERNAL FUNCTIONS
+    // =========================================================================
+
+    function _handlePoolACallback(int256 amount0Delta, int256 amount1Delta, ArbParams memory params) internal {
         address token0 = IUniswapV3Pool(params.poolA).token0();
         address token1 = IUniswapV3Pool(params.poolA).token1();
 
-        // Positive delta = we owe this token to poolA
-        // Negative delta = poolA sent us this token
         address profitToken;
         uint256 amountOwed;
         uint256 amountReceived;
 
         if (amount0Delta > 0) {
-            // Owe token0 to poolA, received token1
             profitToken = token0;
             amountOwed = uint256(amount0Delta);
             amountReceived = uint256(-amount1Delta);
         } else {
-            // Owe token1 to poolA, received token0
             profitToken = token1;
             amountOwed = uint256(amount1Delta);
             amountReceived = uint256(-amount0Delta);
         }
 
-        // Record profit token balance before poolB swap
         uint256 balanceBefore = IERC20(profitToken).balanceOf(address(this));
 
-        // Counter-trade on poolB (reverse direction)
         bool zeroForOneB = !params.zeroForOne;
-        uint160 sqrtPriceLimitB = zeroForOneB
-            ? MIN_SQRT_RATIO_PLUS_ONE
-            : MAX_SQRT_RATIO_MINUS_ONE;
+        uint160 sqrtPriceLimitB = zeroForOneB ? MIN_SQRT_RATIO_PLUS_ONE : MAX_SQRT_RATIO_MINUS_ONE;
 
-        // Use all received tokens as exact input on poolB
-        IUniswapV3Pool(params.poolB).swap(
-            address(this),
-            zeroForOneB,
-            int256(amountReceived),
-            sqrtPriceLimitB,
-            "" // empty data — poolB callback reads from storage
-        );
+        IUniswapV3Pool(params.poolB).swap(address(this), zeroForOneB, int256(amountReceived), sqrtPriceLimitB, "");
 
-        // After poolB swap, we have profitToken from poolB
         uint256 balanceAfter = IERC20(profitToken).balanceOf(address(this));
         uint256 receivedFromB = balanceAfter - balanceBefore;
 
-        // Pay poolA what it's owed
         IERC20(profitToken).safeTransfer(params.poolA, amountOwed);
 
-        // Calculate and validate profit
         uint256 profit = receivedFromB > amountOwed ? receivedFromB - amountOwed : 0;
         if (profit < params.minProfit) revert InsufficientProfit(profit, params.minProfit);
 
-        // Transfer profit to owner
         if (profit > 0) {
             IERC20(profitToken).safeTransfer(owner, profit);
         }
@@ -249,8 +331,6 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         emit ArbitrageExecuted(params.poolA, params.poolB, profitToken, profit);
     }
 
-    /// @dev Second-layer callback: called by poolB. Simply pay poolB the tokens it needs.
-    ///      We have these tokens from poolA's output.
     function _handlePoolBCallback(int256 amount0Delta, int256 amount1Delta) internal {
         address token0 = IUniswapV3Pool(msg.sender).token0();
         address token1 = IUniswapV3Pool(msg.sender).token1();

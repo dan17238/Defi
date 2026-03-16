@@ -104,8 +104,12 @@ pub struct ArbitrageConfig {
     pub flash_arbitrage_contract: String,
     #[serde(default)]
     pub dry_run: bool,
+    /// Legacy 2-pool pairs (converted to routes internally)
     #[serde(default)]
     pub pairs: Vec<ArbitragePairConfig>,
+    /// Multi-hop routes (N pools, circular path)
+    #[serde(default)]
+    pub routes: Vec<ArbitrageRouteConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,6 +121,16 @@ pub struct ArbitragePairConfig {
     pub token1: String,
     pub fee_a: u32,
     pub fee_b: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArbitrageRouteConfig {
+    pub name: String,
+    /// Ordered pool addresses forming a circular route
+    pub pools: Vec<String>,
+    /// Token that pool[0] wants back (profit token). The code auto-computes
+    /// zeroForOne for each hop by reading on-chain token0/token1.
+    pub input_token: String,
 }
 
 fn default_dashboard_port() -> u16 {
@@ -155,8 +169,8 @@ impl AppConfig {
                         "arbitrage.flash_arbitrage_contract is zero address — deploy the contract first"
                     );
                 }
-                if arb.pairs.is_empty() {
-                    eyre::bail!("arbitrage.enabled=true but no arbitrage pairs are configured");
+                if arb.pairs.is_empty() && arb.routes.is_empty() {
+                    eyre::bail!("arbitrage.enabled=true but no pairs or routes are configured");
                 }
                 if arb.max_gas_price_gwei <= 0.0 {
                     eyre::bail!("arbitrage.max_gas_price_gwei must be > 0");

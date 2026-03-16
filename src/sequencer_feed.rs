@@ -1,7 +1,7 @@
-use std::time::Duration;
 use alloy::primitives::Address;
 use futures::StreamExt;
 use serde::Deserialize;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio_tungstenite::connect_async;
 use tracing::{error, info, warn};
@@ -32,10 +32,7 @@ pub struct SequencerEvent {
 
 /// Start the sequencer feed listener. Sends events through the broadcast channel.
 /// Reconnects automatically on failure.
-pub async fn run_sequencer_feed(
-    feed_url: String,
-    tx: broadcast::Sender<SequencerEvent>,
-) {
+pub async fn run_sequencer_feed(feed_url: String, tx: broadcast::Sender<SequencerEvent>) {
     let mut backoff = Duration::from_millis(100);
     let max_backoff = Duration::from_secs(30);
 
@@ -75,7 +72,8 @@ pub async fn run_sequencer_feed(
                                             let elapsed = start.elapsed().as_secs_f64();
                                             info!(
                                                 messages = msg_count,
-                                                rate = format!("{:.1}/s", msg_count as f64 / elapsed),
+                                                rate =
+                                                    format!("{:.1}/s", msg_count as f64 / elapsed),
                                                 "Sequencer Feed throughput"
                                             );
                                         }
@@ -103,7 +101,10 @@ pub async fn run_sequencer_feed(
         }
 
         // Reconnect with backoff
-        warn!(backoff_ms = backoff.as_millis() as u64, "Reconnecting to Sequencer Feed");
+        warn!(
+            backoff_ms = backoff.as_millis() as u64,
+            "Reconnecting to Sequencer Feed"
+        );
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(max_backoff);
     }

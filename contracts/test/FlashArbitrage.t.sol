@@ -51,11 +51,7 @@ contract MockUniV3Pool {
         _amount1Delta = amount1Delta_;
     }
 
-    function slot0()
-        external
-        pure
-        returns (uint160, int24, uint16, uint16, uint16, uint8, bool)
-    {
+    function slot0() external pure returns (uint160, int24, uint16, uint16, uint16, uint8, bool) {
         return (0, 0, 0, 0, 0, 0, true);
     }
 
@@ -69,7 +65,10 @@ contract MockUniV3Pool {
         int256, /* amountSpecified */
         uint160, /* sqrtPriceLimitX96 */
         bytes calldata data
-    ) external returns (int256, int256) {
+    )
+        external
+        returns (int256, int256)
+    {
         // Transfer output tokens to recipient (negative deltas = pool sends)
         if (_amount0Delta < 0) {
             IERC20(token0).safeTransfer(recipient, uint256(-_amount0Delta));
@@ -83,9 +82,7 @@ contract MockUniV3Pool {
         uint256 balance1Before = IERC20(token1).balanceOf(address(this));
 
         // Call the swap callback
-        IUniswapV3SwapCallback(recipient).uniswapV3SwapCallback(
-            _amount0Delta, _amount1Delta, data
-        );
+        IUniswapV3SwapCallback(recipient).uniswapV3SwapCallback(_amount0Delta, _amount1Delta, data);
 
         // Verify the callback paid us what we're owed (positive deltas)
         if (_amount0Delta > 0) {
@@ -289,11 +286,7 @@ contract FlashArbitrageTest is Test {
 
         // Execute arbitrage
         FlashArbitrage.ArbParams memory params = FlashArbitrage.ArbParams({
-            poolA: address(poolA),
-            poolB: address(poolB),
-            zeroForOne: true,
-            amountIn: int256(1e18),
-            minProfit: 0
+            poolA: address(poolA), poolB: address(poolB), zeroForOne: true, amountIn: int256(1e18), minProfit: 0
         });
 
         uint256 ownerToken0Before = IERC20(t0).balanceOf(deployer);
@@ -324,11 +317,7 @@ contract FlashArbitrageTest is Test {
         MockERC20Arb(t1).mint(address(poolB), 1.5e18); // poolB sends token1
 
         FlashArbitrage.ArbParams memory params = FlashArbitrage.ArbParams({
-            poolA: address(poolA),
-            poolB: address(poolB),
-            zeroForOne: false,
-            amountIn: int256(1e18),
-            minProfit: 0
+            poolA: address(poolA), poolB: address(poolB), zeroForOne: false, amountIn: int256(1e18), minProfit: 0
         });
 
         uint256 ownerToken1Before = IERC20(t1).balanceOf(deployer);
@@ -355,13 +344,7 @@ contract FlashArbitrageTest is Test {
             minProfit: 1e18 // require 1e18 profit, but only 0.5e18 available
         });
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                FlashArbitrage.InsufficientProfit.selector,
-                0.5e18,
-                1e18
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(FlashArbitrage.InsufficientProfit.selector, 0.5e18, 1e18));
         flashArb.executeArbitrage(params);
     }
 
@@ -375,11 +358,7 @@ contract FlashArbitrageTest is Test {
         MockERC20Arb(t0).mint(address(poolB), 0.8e18);
 
         FlashArbitrage.ArbParams memory params = FlashArbitrage.ArbParams({
-            poolA: address(poolA),
-            poolB: address(poolB),
-            zeroForOne: true,
-            amountIn: int256(1e18),
-            minProfit: 0
+            poolA: address(poolA), poolB: address(poolB), zeroForOne: true, amountIn: int256(1e18), minProfit: 0
         });
 
         // Should revert because we can't pay poolA (0.8e18 < 1e18)
@@ -412,5 +391,205 @@ contract FlashArbitrageTest is Test {
 
         uint256 expectedWithdraw = amount > balance ? balance : amount;
         assertEq(ownerAfter - ownerBefore, expectedWithdraw);
+    }
+
+    // =========================================================================
+    //                    MULTI-HOP TESTS
+    // =========================================================================
+
+    /// @notice 3-pool triangular arb: t0 → t1 → tC → t0
+    ///   Pool 0 (t0/t1): give 1 t0, get 2 t1
+    ///   Pool 1 (t1/tC): give 2 t1, get 3 tC
+    ///   Pool 2 (tC/t0): give 3 tC, get 1.5 t0
+    ///   Profit: 1.5 - 1 = 0.5 t0
+    function test_multiHop_3pools() public {
+        MockERC20Arb tokenC = new MockERC20Arb("Token C", "C", 18);
+
+        // Create ordered pools (token0 < token1 per UniV3)
+        // Pool 0: t0/t1 (already exists as poolA)
+        // Pool 1: need t1/tC or tC/t1 depending on address order
+        // Pool 2: need t0/tC or tC/t0 depending on address order
+
+        (address tc_t0, address tc_t1) = address(tokenC) < t0 ? (address(tokenC), t0) : (t0, address(tokenC));
+
+        (address tc2_t0, address tc2_t1) = t1 < address(tokenC) ? (t1, address(tokenC)) : (address(tokenC), t1);
+
+        MockUniV3Pool pool1 = new MockUniV3Pool(tc2_t0, tc2_t1, 500);
+        MockUniV3Pool pool2 = new MockUniV3Pool(tc_t0, tc_t1, 3000);
+
+        // Pool 0 (t0/t1): zeroForOne=true → owe t0, get t1
+        poolA.setSwapResult(int256(1e18), -int256(2e18));
+        MockERC20Arb(t1).mint(address(poolA), 2e18);
+
+        // Pool 1: we have t1, swap for tC
+        // Need to figure out direction based on token ordering
+        if (t1 < address(tokenC)) {
+            // pool1 is (t1, tC), zeroForOne=true means give t1 get tC
+            pool1.setSwapResult(int256(2e18), -int256(3e18));
+            tokenC.mint(address(pool1), 3e18);
+        } else {
+            // pool1 is (tC, t1), zeroForOne=false means give t1 get tC
+            pool1.setSwapResult(-int256(3e18), int256(2e18));
+            tokenC.mint(address(pool1), 3e18);
+        }
+
+        // Pool 2: we have tC, swap for t0
+        if (address(tokenC) < t0) {
+            // pool2 is (tC, t0), zeroForOne=true means give tC get t0
+            // But we want to give tC and get t0, so zeroForOne=true
+            pool2.setSwapResult(int256(3e18), -int256(1.5e18));
+            MockERC20Arb(t0).mint(address(pool2), 1.5e18);
+        } else {
+            // pool2 is (t0, tC), zeroForOne=false means give tC get t0
+            pool2.setSwapResult(-int256(1.5e18), int256(3e18));
+            MockERC20Arb(t0).mint(address(pool2), 1.5e18);
+        }
+
+        // Build zeroForOne array
+        bool[] memory zfo = new bool[](3);
+        zfo[0] = true; // pool0: give t0, get t1
+        zfo[1] = t1 < address(tokenC); // pool1: depends on ordering
+        zfo[2] = address(tokenC) < t0
+            ? true  // pool2 is (tC, t0): zeroForOne=true gives tC gets t0
+            : false; // pool2 is (t0, tC): zeroForOne=false gives tC gets t0
+
+        address[] memory pools = new address[](3);
+        pools[0] = address(poolA);
+        pools[1] = address(pool1);
+        pools[2] = address(pool2);
+
+        FlashArbitrage.MultiHopParams memory params =
+            FlashArbitrage.MultiHopParams({pools: pools, zeroForOne: zfo, amountIn: int256(1e18), minProfit: 0});
+
+        uint256 ownerBefore = IERC20(t0).balanceOf(deployer);
+        flashArb.executeMultiHop(params);
+        uint256 ownerAfter = IERC20(t0).balanceOf(deployer);
+
+        assertEq(ownerAfter - ownerBefore, 0.5e18, "3-hop profit should be 0.5 t0");
+        assertEq(IERC20(t0).balanceOf(address(flashArb)), 0, "No residual t0");
+        assertEq(IERC20(t1).balanceOf(address(flashArb)), 0, "No residual t1");
+        assertEq(tokenC.balanceOf(address(flashArb)), 0, "No residual tC");
+    }
+
+    /// @notice Multi-hop also works with 2 pools (same as legacy)
+    function test_multiHop_2pools_sameAsLegacy() public {
+        poolA.setSwapResult(int256(1e18), -int256(2e18));
+        poolB.setSwapResult(-int256(1.5e18), int256(2e18));
+        MockERC20Arb(t1).mint(address(poolA), 2e18);
+        MockERC20Arb(t0).mint(address(poolB), 1.5e18);
+
+        address[] memory pools = new address[](2);
+        pools[0] = address(poolA);
+        pools[1] = address(poolB);
+
+        bool[] memory zfo = new bool[](2);
+        zfo[0] = true; // pool0: give t0, get t1
+        zfo[1] = false; // pool1: give t1, get t0
+
+        FlashArbitrage.MultiHopParams memory params =
+            FlashArbitrage.MultiHopParams({pools: pools, zeroForOne: zfo, amountIn: int256(1e18), minProfit: 0});
+
+        uint256 ownerBefore = IERC20(t0).balanceOf(deployer);
+        flashArb.executeMultiHop(params);
+        uint256 profit = IERC20(t0).balanceOf(deployer) - ownerBefore;
+
+        assertEq(profit, 0.5e18, "2-hop via multiHop should give same profit as legacy");
+    }
+
+    /// @notice Multi-hop with minProfit enforcement
+    function test_multiHop_minProfit_reverts() public {
+        poolA.setSwapResult(int256(1e18), -int256(2e18));
+        poolB.setSwapResult(-int256(1.5e18), int256(2e18));
+        MockERC20Arb(t1).mint(address(poolA), 2e18);
+        MockERC20Arb(t0).mint(address(poolB), 1.5e18);
+
+        address[] memory pools = new address[](2);
+        pools[0] = address(poolA);
+        pools[1] = address(poolB);
+
+        bool[] memory zfo = new bool[](2);
+        zfo[0] = true;
+        zfo[1] = false;
+
+        FlashArbitrage.MultiHopParams memory params = FlashArbitrage.MultiHopParams({
+            pools: pools,
+            zeroForOne: zfo,
+            amountIn: int256(1e18),
+            minProfit: 1e18 // want 1e18 but only 0.5e18 available
+        });
+
+        vm.expectRevert(abi.encodeWithSelector(FlashArbitrage.InsufficientProfit.selector, 0.5e18, 1e18));
+        flashArb.executeMultiHop(params);
+    }
+
+    function test_multiHop_profitExcludesPreExistingDust() public {
+        poolA.setSwapResult(int256(1e18), -int256(2e18));
+        poolB.setSwapResult(-int256(1.5e18), int256(2e18));
+        MockERC20Arb(t1).mint(address(poolA), 2e18);
+        MockERC20Arb(t0).mint(address(poolB), 1.5e18);
+
+        uint256 dust = 0.25e18;
+        MockERC20Arb(t0).mint(address(flashArb), dust);
+
+        address[] memory pools = new address[](2);
+        pools[0] = address(poolA);
+        pools[1] = address(poolB);
+
+        bool[] memory zfo = new bool[](2);
+        zfo[0] = true;
+        zfo[1] = false;
+
+        FlashArbitrage.MultiHopParams memory params =
+            FlashArbitrage.MultiHopParams({pools: pools, zeroForOne: zfo, amountIn: int256(1e18), minProfit: 0});
+
+        uint256 ownerBefore = IERC20(t0).balanceOf(deployer);
+        flashArb.executeMultiHop(params);
+        uint256 ownerAfter = IERC20(t0).balanceOf(deployer);
+
+        assertEq(ownerAfter - ownerBefore, 0.5e18, "Only incremental profit should be paid out");
+        assertEq(IERC20(t0).balanceOf(address(flashArb)), dust, "Pre-existing dust should remain untouched");
+    }
+
+    /// @notice Multi-hop rejects invalid route length
+    function test_multiHop_invalidRoute() public {
+        address[] memory pools = new address[](1);
+        pools[0] = address(poolA);
+        bool[] memory zfo = new bool[](1);
+        zfo[0] = true;
+
+        FlashArbitrage.MultiHopParams memory params =
+            FlashArbitrage.MultiHopParams({pools: pools, zeroForOne: zfo, amountIn: 1e18, minProfit: 0});
+
+        vm.expectRevert(FlashArbitrage.InvalidRoute.selector);
+        flashArb.executeMultiHop(params);
+    }
+
+    /// @notice Multi-hop rejects mismatched arrays
+    function test_multiHop_mismatchedArrays() public {
+        address[] memory pools = new address[](2);
+        pools[0] = address(poolA);
+        pools[1] = address(poolB);
+        bool[] memory zfo = new bool[](3); // wrong length
+
+        FlashArbitrage.MultiHopParams memory params =
+            FlashArbitrage.MultiHopParams({pools: pools, zeroForOne: zfo, amountIn: 1e18, minProfit: 0});
+
+        vm.expectRevert(FlashArbitrage.InvalidRoute.selector);
+        flashArb.executeMultiHop(params);
+    }
+
+    /// @notice Multi-hop onlyOwner
+    function test_multiHop_onlyOwner() public {
+        address[] memory pools = new address[](2);
+        pools[0] = address(poolA);
+        pools[1] = address(poolB);
+        bool[] memory zfo = new bool[](2);
+
+        FlashArbitrage.MultiHopParams memory params =
+            FlashArbitrage.MultiHopParams({pools: pools, zeroForOne: zfo, amountIn: 1e18, minProfit: 0});
+
+        vm.prank(attacker);
+        vm.expectRevert(FlashArbitrage.OnlyOwner.selector);
+        flashArb.executeMultiHop(params);
     }
 }

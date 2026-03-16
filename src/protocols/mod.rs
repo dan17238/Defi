@@ -46,7 +46,5 @@ pub trait Protocol: Send + Sync {
     /// Called once at startup and can be called periodically to refresh the
     /// borrower list. Implementations should add discovered addresses to their
     /// internal position tracker.
-    fn discover_borrowers(
-        &self,
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn discover_borrowers(&self) -> impl std::future::Future<Output = Result<()>> + Send;
 }

@@ -101,7 +101,10 @@ impl PositionTracker {
     }
 
     /// Get all positions whose health factor is below the given threshold.
-    pub fn get_positions_below_threshold(&self, threshold: U256) -> Vec<(Address, TrackedPosition)> {
+    pub fn get_positions_below_threshold(
+        &self,
+        threshold: U256,
+    ) -> Vec<(Address, TrackedPosition)> {
         self.positions
             .iter()
             .filter(|entry| entry.value().health_factor < threshold)

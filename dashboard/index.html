@@ -244,6 +244,9 @@ function fmtPrice(v){
   const digits = v >= 1000 ? 2 : v >= 1 ? 4 : 6;
   return v.toLocaleString(undefined, {maximumFractionDigits: digits});
 }
+function shortAddr(v){
+  return v && v.length > 12 ? `${v.slice(0,8)}...${v.slice(-4)}` : (v || '--');
+}
 
 // ─── Liquidation tables ───
 function renderTrades(){const bd=$('tbTrades'),tt=$('tradeTitle');tt.textContent=S.trades.length?`${S.trades.length} 笔交易`:'交易记录';if(!S.trades.length){bd.innerHTML='<tr><td colspan="8" class="empty-row">等待 Bot 启动</td></tr>';return}bd.innerHTML=S.trades.map(t=>{const c=parseFloat(t.profit)>=0?'pos':'neg';return `<tr><td class="mono" style="color:var(--t2)">${t.time}</td><td>${t.pair}</td><td>${t.amount}</td><td class="${c}">${t.profit}E</td><td style="color:var(--t2)">${t.gas}E</td><td>${t.latency}ms</td><td><span class="pill ${t.status==='ok'?'ok':t.status==='err'?'er':'sm'}">${{ok:'成功',err:'失败',sim:'模拟'}[t.status]||'?'}</span></td><td>${t.tx==='—'?'—':`<a class="lk" href="https://arbiscan.io/tx/${t.tx}" target="_blank">${t.tx.slice(0,10)}...</a>`}</td></tr>`}).join('')}
@@ -261,6 +264,24 @@ function renderArbPairs(){
     const ratio=Math.min(p.spread_bps/Math.max(p.fee_threshold_bps*2,1),1);
     const barColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--t3)';
     const spreadColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--t2)';
+    if(p.kind==='route'){
+      return `<div class="pool-card">
+      <div class="pool-head">
+        <div class="pool-name">${p.name} ${p.profitable?'<span class="pill ok" style="margin-left:6px">可套利</span>':''}</div>
+        <div class="pool-spread-num" style="color:${spreadColor}">${p.spread_bps.toFixed(1)} <span style="font-size:10px;font-weight:500;color:var(--t3)">bps</span></div>
+      </div>
+      <div class="pool-prices">
+        <span><span class="label">路径</span> ${p.path||'--'}</span>
+        <span><span class="label">Hop 数</span> ${p.hop_count||'--'}</span>
+        <span><span class="label">门槛</span> ${p.fee_threshold_bps.toFixed(0)} bps</span>
+        <span><span class="label">首池</span> ${shortAddr(p.pool_a)}</span>
+        <span><span class="label">末池</span> ${shortAddr(p.pool_b)}</span>
+        <span><span class="label">首池流动性</span> ${Number(p.liquidity_a).toLocaleString()}</span>
+        <span><span class="label">最浅流动性</span> ${Number(p.liquidity_b).toLocaleString()}</span>
+      </div>
+      <div class="spread-bar"><div class="spread-fill" style="width:${(ratio*100).toFixed(1)}%;background:${barColor}"></div></div>
+    </div>`;
+    }
     return `<div class="pool-card">
       <div class="pool-head">
         <div class="pool-name">${p.name} ${p.profitable?'<span class="pill ok" style="margin-left:6px">可套利</span>':''}</div>

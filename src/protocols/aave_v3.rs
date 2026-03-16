@@ -141,7 +141,10 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
                 .iter()
                 .map(|user| {
                     let call_data = IPool::getUserAccountDataCall { user: *user };
-                    (self.pool_address, alloy::sol_types::SolCall::abi_encode(&call_data))
+                    (
+                        self.pool_address,
+                        alloy::sol_types::SolCall::abi_encode(&call_data),
+                    )
                 })
                 .collect();
 
@@ -208,7 +211,9 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
 
             // Collateral: aToken balance and usage as collateral enabled
             if user_data.usageAsCollateralEnabled {
-                if let Some(collateral_usd) = token_value_usd(user_data.currentATokenBalance, *reserve) {
+                if let Some(collateral_usd) =
+                    token_value_usd(user_data.currentATokenBalance, *reserve)
+                {
                     if collateral_usd > max_collateral_usd {
                         max_collateral_usd = collateral_usd;
                         best_collateral = *reserve;
@@ -240,7 +245,9 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
             }
         }
 
-        if best_collateral == Address::ZERO || best_debt == Address::ZERO || max_debt_raw == U256::ZERO
+        if best_collateral == Address::ZERO
+            || best_debt == Address::ZERO
+            || max_debt_raw == U256::ZERO
         {
             debug!(user = %user, "No suitable collateral/debt pair found");
             return Ok(None);
@@ -293,9 +300,10 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
         // AAVE v3 Borrow event topic0:
         // Borrow(address,address,address,uint256,uint8,uint256,uint16)
         // = 0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0
-        let borrow_topic: FixedBytes<32> = "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
-            .parse()
-            .wrap_err("Invalid borrow event topic")?;
+        let borrow_topic: FixedBytes<32> =
+            "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
+                .parse()
+                .wrap_err("Invalid borrow event topic")?;
 
         // Scan the last 2,400,000 blocks (~7 days on Arbitrum at ~250ms blocks)
         // to capture a broader set of active borrowers.
@@ -351,7 +359,8 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
             protocol = "aave_v3",
             events = logs.len(),
             unique_borrowers = self.position_tracker.borrower_count(),
-            "Borrower discovery complete (added {} entries)", count
+            "Borrower discovery complete (added {} entries)",
+            count
         );
 
         Ok(())
@@ -375,7 +384,10 @@ impl<P: Provider + Clone + Send + Sync> Protocol for AaveV3Protocol<P> {
 
         let borrowers = self.position_tracker.get_all_borrowers();
         if borrowers.is_empty() {
-            debug!(protocol = self.name(), "No tracked borrowers, skipping scan");
+            debug!(
+                protocol = self.name(),
+                "No tracked borrowers, skipping scan"
+            );
             return Ok(Vec::new());
         }
 

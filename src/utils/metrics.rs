@@ -51,13 +51,9 @@ impl Metrics {
     }
 
     pub fn record_liquidation(&self, profit_usd: f64, success: bool) {
-        self.inner
-            .liquidation_count
-            .fetch_add(1, Ordering::Relaxed);
+        self.inner.liquidation_count.fetch_add(1, Ordering::Relaxed);
         if success {
-            self.inner
-                .successful_count
-                .fetch_add(1, Ordering::Relaxed);
+            self.inner.successful_count.fetch_add(1, Ordering::Relaxed);
         }
         let micros = (profit_usd * 1_000_000.0) as u64;
         self.inner
@@ -77,9 +73,7 @@ impl Metrics {
 
     /// Record that a block was processed.
     pub fn record_block_processed(&self) {
-        self.inner
-            .blocks_processed
-            .fetch_add(1, Ordering::Relaxed);
+        self.inner.blocks_processed.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record that positions were scanned.

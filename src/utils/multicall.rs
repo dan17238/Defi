@@ -53,10 +53,7 @@ impl<'a, P: Provider + Send + Sync> Multicall<'a, P> {
     /// Each call is a (target_address, encoded_calldata) pair.
     /// All calls are marked with allowFailure=true so one revert does not
     /// fail the entire batch.
-    pub async fn aggregate3(
-        &self,
-        calls: Vec<(Address, Vec<u8>)>,
-    ) -> Result<Vec<MulticallResult>> {
+    pub async fn aggregate3(&self, calls: Vec<(Address, Vec<u8>)>) -> Result<Vec<MulticallResult>> {
         if calls.is_empty() {
             return Ok(Vec::new());
         }

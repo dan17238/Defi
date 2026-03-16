@@ -151,3 +151,38 @@ token0 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
 token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
 fee_a = 100
 fee_b = 500
+
+# === Multi-hop routes (triangular arbitrage) ===
+
+# WETH → USDC(0.05%) → USDC.e(0.01%) → WETH(USDC.e/WETH 0.3%)
+# Total fees: 0.05% + 0.01% + 0.3% = 0.36%
+[[arbitrage.routes]]
+name = "WETH→USDC→USDC.e→WETH"
+pools = [
+    "0xC6962004f452bE9203591991D15f6b388e09E8D0",
+    "0x8e295789c9465487074a65b1ae9ce0351172393f",
+    "0x17c14D2c404D167802b16C450d3c99F88F2c4F4d",
+]
+input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+
+# WETH → USDC(0.3%) → USDC.e(0.01%) → WETH(USDC.e/WETH 0.05%)
+# Reverse direction of the above
+[[arbitrage.routes]]
+name = "WETH→USDC(0.3%)→USDC.e→WETH"
+pools = [
+    "0xc473e2aEE3441BF9240bE85eb122aBB059A3b57C",
+    "0x8e295789c9465487074a65b1ae9ce0351172393f",
+    "0xC31E54c7a869B9FcBEcc14363CF510d1c41fa443",
+]
+input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+
+# WETH → USDC(0.05%) → USDT(0.01%) → WETH(USDT/WETH 0.3%)
+# Through USDT stablecoin
+[[arbitrage.routes]]
+name = "WETH→USDC→USDT→WETH"
+pools = [
+    "0xC6962004f452bE9203591991D15f6b388e09E8D0",
+    "0xbe3ad6a5669dc0b8b12febc03608860c31e2eef6",
+    "0xc82819f72a9e77e2c0c3a69b3196478f44303cf4",
+]
+input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"

@@ -34,7 +34,10 @@ pub async fn create_ws_provider(ws_url: &str) -> Result<RootProvider> {
         .connect_ws(ws_connect)
         .await
         .wrap_err("Failed to connect WebSocket provider")?;
-    let chain_id = provider.get_chain_id().await.wrap_err("Failed to fetch chain ID")?;
+    let chain_id = provider
+        .get_chain_id()
+        .await
+        .wrap_err("Failed to fetch chain ID")?;
     info!(chain_id, "WebSocket provider connected");
     Ok(provider)
 }
@@ -59,10 +62,10 @@ pub fn create_signed_http_provider(
     wallet: EthereumWallet,
 ) -> Result<SignedHttpProvider> {
     info!(url = http_url, "Creating signed HTTP provider");
-    let url = http_url.parse().wrap_err("Invalid HTTP RPC URL for signed provider")?;
-    let provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http(url);
+    let url = http_url
+        .parse()
+        .wrap_err("Invalid HTTP RPC URL for signed provider")?;
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(url);
     Ok(provider)
 }
 
@@ -77,7 +80,10 @@ pub async fn create_ipc_provider(ipc_path: &str) -> Result<RootProvider> {
         .connect_ipc(ipc_connect)
         .await
         .wrap_err_with(|| format!("Failed to connect IPC at {}", ipc_path))?;
-    let chain_id = provider.get_chain_id().await.wrap_err("Failed to fetch chain ID via IPC")?;
+    let chain_id = provider
+        .get_chain_id()
+        .await
+        .wrap_err("Failed to fetch chain ID via IPC")?;
     info!(chain_id, "IPC provider connected");
     Ok(provider)
 }

@@ -12,10 +12,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
 use alloy::providers::Provider;
 use alloy::signers::local::PrivateKeySigner;
-use alloy::network::EthereumWallet;
 use eyre::{Context, Result};
 use futures::StreamExt;
 use tokio::signal;
@@ -92,9 +92,7 @@ async fn main() -> Result<()> {
 
     // Initialize tracing subscriber with the configured log level
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            tracing_subscriber::EnvFilter::new(&config.monitoring.log_level)
-        });
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.monitoring.log_level));
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
@@ -124,16 +122,12 @@ async fn main() -> Result<()> {
     // --- Providers ---
     // Read-only provider: IPC (fastest) > HTTP (fallback)
     let mut ws_provider = provider::create_ws_provider(&config.rpc.ws_url).await?;
-    let read_provider = provider::create_best_read_provider(
-        &config.rpc.http_url,
-        config.rpc.ipc_path.as_deref(),
-    ).await?;
+    let read_provider =
+        provider::create_best_read_provider(&config.rpc.http_url, config.rpc.ipc_path.as_deref())
+            .await?;
 
     // Execution provider (signed with wallet, points to sequencer for lowest latency)
-    let exec_provider = provider::create_signed_http_provider(
-        &config.sequencer.rpc_url,
-        wallet,
-    )?;
+    let exec_provider = provider::create_signed_http_provider(&config.sequencer.rpc_url, wallet)?;
 
     let block_number = provider::get_latest_block_number(&read_provider).await?;
     info!(block_number, "Connected to Arbitrum");
@@ -174,7 +168,10 @@ async fn main() -> Result<()> {
     // --- AAVE v3 ---
     if let Some(ref aave_config) = config.protocols.aave_v3 {
         if aave_config.enabled {
-            let pool: Address = aave_config.pool.parse().wrap_err("Invalid AAVE v3 pool address")?;
+            let pool: Address = aave_config
+                .pool
+                .parse()
+                .wrap_err("Invalid AAVE v3 pool address")?;
             let data_provider: Address = aave_config
                 .data_provider
                 .parse()
@@ -203,7 +200,8 @@ async fn main() -> Result<()> {
                     &mut shutdown_rx,
                     latest_block,
                     rescan_notify,
-                ).await;
+                )
+                .await;
                 info!("AAVE v3 monitor stopped");
             });
             protocol_handles.push(handle);
@@ -213,7 +211,10 @@ async fn main() -> Result<()> {
     // --- Radiant ---
     if let Some(ref radiant_config) = config.protocols.radiant {
         if radiant_config.enabled {
-            let pool: Address = radiant_config.pool.parse().wrap_err("Invalid Radiant pool address")?;
+            let pool: Address = radiant_config
+                .pool
+                .parse()
+                .wrap_err("Invalid Radiant pool address")?;
             let data_provider: Address = radiant_config
                 .data_provider
                 .parse()
@@ -242,7 +243,8 @@ async fn main() -> Result<()> {
                     &mut shutdown_rx,
                     latest_block,
                     rescan_notify,
-                ).await;
+                )
+                .await;
                 info!("Radiant monitor stopped");
             });
             protocol_handles.push(handle);
@@ -252,7 +254,10 @@ async fn main() -> Result<()> {
     // --- Silo (Phase 4 skeleton) ---
     if let Some(ref silo_config) = config.protocols.silo {
         if silo_config.enabled {
-            let lens: Address = silo_config.lens.parse().wrap_err("Invalid Silo lens address")?;
+            let lens: Address = silo_config
+                .lens
+                .parse()
+                .wrap_err("Invalid Silo lens address")?;
             let repository: Address = silo_config
                 .repository
                 .parse()
@@ -280,7 +285,8 @@ async fn main() -> Result<()> {
                     &mut shutdown_rx,
                     latest_block,
                     rescan_notify,
-                ).await;
+                )
+                .await;
                 info!("Silo monitor stopped");
             });
             protocol_handles.push(handle);
@@ -323,14 +329,12 @@ async fn main() -> Result<()> {
 
             // Re-clone providers for the arb monitor
             let arb_read_provider = read_provider.clone();
-            let arb_exec_provider = provider::create_signed_http_provider(
-                &config.sequencer.rpc_url,
-                {
+            let arb_exec_provider =
+                provider::create_signed_http_provider(&config.sequencer.rpc_url, {
                     let pk = config.resolve_private_key()?;
                     let signer: PrivateKeySigner = pk.parse().wrap_err("arb signer parse")?;
                     EthereumWallet::from(signer)
-                },
-            )?;
+                })?;
 
             let arb_monitor = ArbitrageMonitor::new(
                 arb_read_provider,
@@ -456,7 +460,10 @@ async fn run_protocol_monitor<Proto, R, E>(
     E: Provider + Clone + Send + Sync,
 {
     // Run initial borrower discovery before entering the scan loop (Fix 6).
-    info!(protocol = protocol.name(), "Running initial borrower discovery");
+    info!(
+        protocol = protocol.name(),
+        "Running initial borrower discovery"
+    );
     if let Err(e) = protocol.discover_borrowers().await {
         warn!(
             protocol = protocol.name(),

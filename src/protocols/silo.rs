@@ -89,11 +89,7 @@ impl<P: Provider + Clone + Send + Sync> SiloProtocol<P> {
     }
 
     /// Check solvency for a given user in a given silo.
-    pub async fn check_user_solvency(
-        &self,
-        silo: Address,
-        user: Address,
-    ) -> Result<bool> {
+    pub async fn check_user_solvency(&self, silo: Address, user: Address) -> Result<bool> {
         let lens = ISiloLens::new(self.lens_address, &self.provider);
         let solvent = lens
             .isSolvent(silo, user)
@@ -138,7 +134,10 @@ impl<P: Provider + Clone + Send + Sync> Protocol for SiloProtocol<P> {
 
     async fn discover_borrowers(&self) -> Result<()> {
         // Phase 4 TODO: scan Silo Borrow events
-        debug!(protocol = self.name(), "Silo borrower discovery not yet implemented");
+        debug!(
+            protocol = self.name(),
+            "Silo borrower discovery not yet implemented"
+        );
         Ok(())
     }
 }

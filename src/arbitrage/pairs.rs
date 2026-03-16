@@ -27,7 +27,9 @@ impl PoolPair {
         if token0 >= token1 {
             eyre::bail!(
                 "Pair '{}': token0 ({}) must be < token1 ({}) per UniV3 convention",
-                cfg.name, cfg.token0, cfg.token1
+                cfg.name,
+                cfg.token0,
+                cfg.token1
             );
         }
 

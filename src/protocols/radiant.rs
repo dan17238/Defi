@@ -129,7 +129,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         let feed_addr: Address = CHAINLINK_ETH_USD.parse().expect("valid chainlink address");
         // Use raw eth_call instead of sol! contract instance to avoid type issues
         let calldata = alloy::primitives::Bytes::from(
-            alloy::primitives::hex::decode("50d25bcd").unwrap() // latestAnswer() selector
+            alloy::primitives::hex::decode("50d25bcd").unwrap(), // latestAnswer() selector
         );
         let tx = alloy::rpc::types::TransactionRequest::default()
             .to(feed_addr)
@@ -143,10 +143,15 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                         warn!("Chainlink returned negative price, ignoring");
                     } else {
                         let price_raw = U256::from_be_slice(&result[..32]);
-                        let price_cents = (price_raw / U256::from(1_000_000)).saturating_to::<u64>();
-                        if price_cents > 100 && price_cents < 100_000_000 { // sanity: $1 - $1M
+                        let price_cents =
+                            (price_raw / U256::from(1_000_000)).saturating_to::<u64>();
+                        if price_cents > 100 && price_cents < 100_000_000 {
+                            // sanity: $1 - $1M
                             CACHED_ETH_PRICE_CENTS.store(price_cents, Ordering::Relaxed);
-                            debug!(eth_price_usd = price_cents as f64 / 100.0, "Updated ETH price from Chainlink");
+                            debug!(
+                                eth_price_usd = price_cents as f64 / 100.0,
+                                "Updated ETH price from Chainlink"
+                            );
                         }
                     }
                 }
@@ -233,8 +238,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         _total_debt_eth: U256,
     ) -> Result<Option<LiquidationOpportunity>> {
         let reserves = self.fetch_reserves_list().await?;
-        let data_provider =
-            IRadiantDataProvider::new(self.data_provider_address, &self.provider);
+        let data_provider = IRadiantDataProvider::new(self.data_provider_address, &self.provider);
 
         let mut best_collateral = Address::ZERO;
         let mut best_debt = Address::ZERO;
@@ -262,7 +266,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             };
 
             if user_data.usageAsCollateralEnabled {
-                if let Some(collateral_usd) = token_value_usd(user_data.currentATokenBalance, *reserve) {
+                if let Some(collateral_usd) =
+                    token_value_usd(user_data.currentATokenBalance, *reserve)
+                {
                     if collateral_usd > max_collateral_usd {
                         max_collateral_usd = collateral_usd;
                         best_collateral = *reserve;
@@ -293,7 +299,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             }
         }
 
-        if best_collateral == Address::ZERO || best_debt == Address::ZERO || max_debt_raw == U256::ZERO
+        if best_collateral == Address::ZERO
+            || best_debt == Address::ZERO
+            || max_debt_raw == U256::ZERO
         {
             debug!(user = %user, "No suitable Radiant collateral/debt pair found");
             return Ok(None);
@@ -333,9 +341,10 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         // Radiant (AAVE v2 fork) Borrow event topic0:
         // Borrow(address,address,address,uint256,uint256,uint256,uint16)
         // Same topic hash as AAVE v2's Borrow event.
-        let borrow_topic: FixedBytes<32> = "0xc6a898309e823ee50bac64e45ca8adba6690e99e7841c45d754e2a38e9019d9b"
-            .parse()
-            .wrap_err("Invalid Radiant borrow event topic")?;
+        let borrow_topic: FixedBytes<32> =
+            "0xc6a898309e823ee50bac64e45ca8adba6690e99e7841c45d754e2a38e9019d9b"
+                .parse()
+                .wrap_err("Invalid Radiant borrow event topic")?;
 
         // Scan the last 2,400,000 blocks (~7 days on Arbitrum at ~250ms blocks)
         // to capture a broader set of active borrowers.
@@ -391,7 +400,8 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             protocol = "radiant",
             events = logs.len(),
             unique_borrowers = self.position_tracker.borrower_count(),
-            "Radiant borrower discovery complete (added {} entries)", count
+            "Radiant borrower discovery complete (added {} entries)",
+            count
         );
 
         Ok(())
@@ -418,7 +428,10 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
 
         let borrowers = self.position_tracker.get_all_borrowers();
         if borrowers.is_empty() {
-            debug!(protocol = self.name(), "No tracked Radiant borrowers, skipping");
+            debug!(
+                protocol = self.name(),
+                "No tracked Radiant borrowers, skipping"
+            );
             return Ok(Vec::new());
         }
 

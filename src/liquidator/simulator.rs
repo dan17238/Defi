@@ -3,8 +3,8 @@ use alloy::providers::Provider;
 use alloy::sol;
 use alloy::sol_types::SolEvent;
 use eyre::{Context, Result};
-use revm::database::{AlloyDB, BlockId, CacheDB, WrapDatabaseAsync};
 use revm::context_interface::JournalTr;
+use revm::database::{AlloyDB, BlockId, CacheDB, WrapDatabaseAsync};
 use revm::handler::MainnetContext;
 use revm::primitives::hardfork::SpecId;
 use revm::MainBuilder;
@@ -75,7 +75,10 @@ pub struct Simulator<P> {
 
 impl<P: Provider + Clone + Send + Sync> Simulator<P> {
     pub fn new(provider: P, wallet_address: Address) -> Self {
-        Self { provider, wallet_address }
+        Self {
+            provider,
+            wallet_address,
+        }
     }
 
     /// Prewarm the CacheDB by loading bytecode for key contracts.
@@ -127,14 +130,18 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         //   -> WrapDatabaseAsync (bridges async to sync DatabaseRef)
         //     -> CacheDB (in-memory cache layer, implements Database)
         let alloy_db = AlloyDB::new(self.provider.clone(), BlockId::latest());
-        let wrapped_db = WrapDatabaseAsync::new(alloy_db)
-            .ok_or_else(|| eyre::eyre!("Failed to create WrapDatabaseAsync - no tokio runtime available"))?;
+        let wrapped_db = WrapDatabaseAsync::new(alloy_db).ok_or_else(|| {
+            eyre::eyre!("Failed to create WrapDatabaseAsync - no tokio runtime available")
+        })?;
         let mut cache_db = CacheDB::new(wrapped_db);
 
         // Prewarm cache: preload key contract bytecode to avoid RPC calls during simulation.
         let prewarm_start = std::time::Instant::now();
         Self::prewarm_cache(&mut cache_db, flash_liquidator, opportunity);
-        debug!(prewarm_ms = prewarm_start.elapsed().as_millis(), "Cache prewarmed");
+        debug!(
+            prewarm_ms = prewarm_start.elapsed().as_millis(),
+            "Cache prewarmed"
+        );
 
         // Build the EVM context with Arbitrum chain id (42161).
         type SimDB<P> = CacheDB<WrapDatabaseAsync<AlloyDB<alloy::network::Ethereum, P>>>;
@@ -154,8 +161,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             let mut c: MainnetContext<SimDB<P>> = revm::context::Context {
                 tx: Default::default(),
                 block: Default::default(),
-                cfg: revm::context::CfgEnv::new_with_spec(SpecId::CANCUN)
-                    .with_chain_id(42161),
+                cfg: revm::context::CfgEnv::new_with_spec(SpecId::CANCUN).with_chain_id(42161),
                 journaled_state: revm::Journal::new(cache_db),
                 chain: (),
                 local: Default::default(),
@@ -183,15 +189,13 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             .nonce(0)
             .build_fill();
 
-        let result = revm::ExecuteEvm::transact(&mut evm, tx_for_exec)
-            .wrap_err("revm transact failed")?;
+        let result =
+            revm::ExecuteEvm::transact(&mut evm, tx_for_exec).wrap_err("revm transact failed")?;
 
         let exec_result = result.result;
 
         match exec_result {
-            revm::context_interface::result::ExecutionResult::Success {
-                gas, logs, ..
-            } => {
+            revm::context_interface::result::ExecutionResult::Success { gas, logs, .. } => {
                 let gas_used = gas.used();
                 debug!(gas_used, "Simulation succeeded");
 
@@ -229,7 +233,9 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 let gas_price_gwei = 0.1_f64;
                 let gas_cost_eth = gas_used as f64 * gas_price_gwei / 1e9;
                 let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-                    .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    as f64
+                    / 100.0;
                 let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
                 let l1_data_cost_usd = 0.03;
                 let gas_cost_usd = gas_cost_eth * eth_price + l1_data_cost_usd;
