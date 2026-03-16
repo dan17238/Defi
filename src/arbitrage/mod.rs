@@ -277,14 +277,11 @@ where
             "Profitable arbitrage found, executing"
         );
 
-        // Determine gas price based on profit
-        let gas_price_gwei = select_gas_price(sim_result.profit_usd, self.config.max_gas_price_gwei);
-
         if self.config.dry_run {
             info!(
                 pair = %opp.pair_name,
                 profit_usd = sim_result.profit_usd,
-                gas_gwei = gas_price_gwei,
+                gas_gwei = sim_result.selected_gas_price_gwei,
                 "DRY RUN: would execute arbitrage"
             );
             return Ok(());
@@ -292,7 +289,12 @@ where
 
         // Execute on-chain
         match self
-            .send_arb_tx(calldata, gas_price_gwei, opp.pair_name.clone(), sim_result.profit_usd)
+            .send_arb_tx(
+                calldata,
+                sim_result.selected_gas_price_gwei,
+                opp.pair_name.clone(),
+                sim_result.profit_usd,
+            )
             .await
         {
             Ok(tx_hash) => {
@@ -429,15 +431,19 @@ where
                     }
                 }
 
-                // Estimate gas cost in USD
-                let gas_cost_usd = Self::gas_cost_usd(gas_used, 100_000_000);
-                let profit_usd = gross_profit_usd.unwrap_or(0.0) - gas_cost_usd;
+                let gross_profit_usd = gross_profit_usd.unwrap_or(0.0);
+                let (selected_gas_price_gwei, profit_usd) = estimate_net_profit_after_gas(
+                    gross_profit_usd,
+                    gas_used,
+                    self.config.max_gas_price_gwei,
+                );
 
                 Ok(ArbSimResult {
                     profitable: profit_usd >= self.config.min_profit_usd,
                     profit_usd,
                     gas_used,
                     reverted: false,
+                    selected_gas_price_gwei,
                 })
             }
             revm::context_interface::result::ExecutionResult::Revert { gas, .. } => {
@@ -446,6 +452,7 @@ where
                     profit_usd: 0.0,
                     gas_used: gas.used(),
                     reverted: true,
+                    selected_gas_price_gwei: 0.0,
                 })
             }
             revm::context_interface::result::ExecutionResult::Halt { gas, .. } => {
@@ -454,6 +461,7 @@ where
                     profit_usd: 0.0,
                     gas_used: gas.used(),
                     reverted: true,
+                    selected_gas_price_gwei: 0.0,
                 })
             }
         }
@@ -634,6 +642,7 @@ struct ArbSimResult {
     profit_usd: f64,
     gas_used: u64,
     reverted: bool,
+    selected_gas_price_gwei: f64,
 }
 
 /// Dynamic gas pricing based on profit.
@@ -647,4 +656,37 @@ fn select_gas_price(profit_usd: f64, max_gwei: f64) -> f64 {
         0.02
     };
     gwei.min(max_gwei)
+}
+
+fn estimate_net_profit_after_gas(
+    gross_profit_usd: f64,
+    gas_used: u64,
+    max_gwei: f64,
+) -> (f64, f64) {
+    let selected_gas_price_gwei = select_gas_price(gross_profit_usd, max_gwei);
+    let gas_price_wei = (selected_gas_price_gwei * 1e9) as u128;
+    let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
+        .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+    let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
+    let gas_cost_usd = gas_used as f64 * gas_price_wei as f64 / 1e18 * eth_price;
+    (selected_gas_price_gwei, gross_profit_usd - gas_cost_usd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{estimate_net_profit_after_gas, select_gas_price};
+
+    #[test]
+    fn simulation_uses_same_high_profit_gas_tier_as_execution() {
+        let (gas_gwei, net_profit) = estimate_net_profit_after_gas(60.0, 500_000, 2.0);
+        assert_eq!(gas_gwei, 1.0);
+        assert!(net_profit < 60.0);
+    }
+
+    #[test]
+    fn gas_price_selection_respects_max_cap() {
+        assert_eq!(select_gas_price(100.0, 0.2), 0.2);
+        assert_eq!(select_gas_price(20.0, 2.0), 0.1);
+        assert_eq!(select_gas_price(1.0, 2.0), 0.02);
+    }
 }

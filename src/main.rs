@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
 
     // --- Providers ---
     // Read-only provider: IPC (fastest) > HTTP (fallback)
-    let ws_provider = provider::create_ws_provider(&config.rpc.ws_url).await?;
+    let mut ws_provider = provider::create_ws_provider(&config.rpc.ws_url).await?;
     let read_provider = provider::create_best_read_provider(
         &config.rpc.http_url,
         config.rpc.ipc_path.as_deref(),
@@ -387,8 +387,9 @@ async fn main() -> Result<()> {
                         // Stream ended — reconnect instead of shutting down
                         warn!("Block subscription stream ended, reconnecting...");
                         match provider::create_ws_provider(&ws_url).await {
-                            Ok(new_ws) => {
-                                match new_ws.subscribe_blocks().await {
+                            Ok(new_ws_provider) => {
+                                ws_provider = new_ws_provider;
+                                match ws_provider.subscribe_blocks().await {
                                     Ok(sub) => {
                                         block_stream = Box::pin(sub.into_stream());
                                         info!("Block subscription reconnected");
