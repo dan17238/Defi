@@ -1,7 +1,8 @@
 use std::time::Duration;
+use alloy::primitives::Address;
 use futures::StreamExt;
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio_tungstenite::connect_async;
 use tracing::{error, info, warn};
 
@@ -19,18 +20,21 @@ pub struct FeedMessage {
     pub message: serde_json::Value,
 }
 
-/// Event sent from the feed to the main loop
+/// Event sent from the feed to subscribers (main loop + arb monitor).
 #[derive(Debug, Clone)]
 pub struct SequencerEvent {
     pub sequence_number: u64,
     pub received_at: std::time::Instant,
+    /// Transaction target address parsed from the feed message (best-effort).
+    /// Used by the arb monitor to quickly filter non-pool transactions.
+    pub tx_to: Option<Address>,
 }
 
-/// Start the sequencer feed listener. Sends events through the channel.
+/// Start the sequencer feed listener. Sends events through the broadcast channel.
 /// Reconnects automatically on failure.
 pub async fn run_sequencer_feed(
     feed_url: String,
-    tx: mpsc::UnboundedSender<SequencerEvent>,
+    tx: broadcast::Sender<SequencerEvent>,
 ) {
     let mut backoff = Duration::from_millis(100);
     let max_backoff = Duration::from_secs(30);
@@ -59,6 +63,7 @@ pub async fn run_sequencer_feed(
                                             let event = SequencerEvent {
                                                 sequence_number: feed_msg.sequence_number,
                                                 received_at: std::time::Instant::now(),
+                                                tx_to: None, // TODO: parse from feed message L2 data
                                             };
                                             if tx.send(event).is_err() {
                                                 info!("Feed channel closed, stopping");

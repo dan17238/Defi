@@ -46,3 +46,28 @@ rpc_url = "https://arb1-sequencer.arbitrum.io/rpc"
 metrics_port = 9090
 dashboard_port = 3000
 log_level = "info"
+
+[arbitrage]
+enabled = false
+min_profit_usd = 0.5
+max_gas_price_gwei = 2.0
+flash_arbitrage_contract = "0x0000000000000000000000000000000000000000"
+dry_run = true
+
+[[arbitrage.pairs]]
+name = "WETH/USDC 0.05% <> 0.3%"
+pool_a = "0xC6962004f452bE9203591991D15f6b388e09E8D0"
+pool_b = "0xC31E54c7a869B9FcBEcc14363CF510d1c41fa443"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+fee_a = 500
+fee_b = 3000
+
+[[arbitrage.pairs]]
+name = "WBTC/WETH 0.05% <> 0.3%"
+pool_a = "0x2f5e87C9312fa29aed5c179E456625D79015299c"
+pool_b = "0xa62aD78825e3a1eE34D37f9C1Fe8A37cAB5e65E9"
+token0 = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
+token1 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+fee_a = 500
+fee_b = 3000

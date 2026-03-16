@@ -1,3 +1,4 @@
+mod arbitrage;
 mod config;
 mod liquidator;
 mod protocols;
@@ -21,12 +22,14 @@ use tokio::signal;
 use tokio::sync::{broadcast, Notify};
 use tracing::{error, info, warn};
 
+use crate::arbitrage::ArbitrageMonitor;
 use crate::config::AppConfig;
 use crate::liquidator::Liquidator;
 use crate::protocols::aave_v3::AaveV3Protocol;
 use crate::protocols::radiant::RadiantProtocol;
 use crate::protocols::silo::SiloProtocol;
 use crate::protocols::Protocol;
+use crate::sequencer_feed::SequencerEvent;
 use crate::utils::metrics::Metrics;
 
 /// Command-line arguments (parsed manually to avoid extra dependencies).
@@ -79,9 +82,12 @@ async fn main() -> Result<()> {
     // Load configuration
     let mut config = AppConfig::load(&args.config_path)?;
 
-    // CLI --dry-run overrides config
+    // CLI --dry-run overrides config (both execution and arbitrage)
     if let Some(dry_run) = args.dry_run {
         config.execution.dry_run = dry_run;
+        if let Some(ref mut arb) = config.arbitrage {
+            arb.dry_run = dry_run;
+        }
     }
 
     // Initialize tracing subscriber with the configured log level
@@ -292,13 +298,59 @@ async fn main() -> Result<()> {
         });
     }
 
-    // --- Sequencer Feed ---
-    let (feed_tx, mut feed_rx) = tokio::sync::mpsc::unbounded_channel();
+    // --- Sequencer Feed (broadcast channel: arb monitor + main loop each subscribe) ---
+    let (feed_tx, _) = tokio::sync::broadcast::channel::<SequencerEvent>(1024);
+    let mut feed_rx = feed_tx.subscribe();
     {
         let feed_url = config.sequencer.feed_url.clone();
+        let feed_tx = feed_tx.clone();
         tokio::spawn(async move {
             sequencer_feed::run_sequencer_feed(feed_url, feed_tx).await;
         });
+    }
+
+    // Now spawn the arbitrage monitor with its own feed subscriber
+    if let Some(ref arb_config) = config.arbitrage {
+        if arb_config.enabled {
+            let flash_arb_address: Address = arb_config
+                .flash_arbitrage_contract
+                .parse()
+                .wrap_err("Invalid flash_arbitrage_contract address (arb spawn)")?;
+
+            // Re-clone providers for the arb monitor
+            let arb_read_provider = read_provider.clone();
+            let arb_exec_provider = provider::create_signed_http_provider(
+                &config.sequencer.rpc_url,
+                {
+                    let pk = config.resolve_private_key()?;
+                    let signer: PrivateKeySigner = pk.parse().wrap_err("arb signer parse")?;
+                    EthereumWallet::from(signer)
+                },
+            )?;
+
+            let arb_monitor = ArbitrageMonitor::new(
+                arb_read_provider,
+                arb_exec_provider,
+                arb_config.clone(),
+                wallet_address,
+                flash_arb_address,
+                metrics.clone(),
+            )
+            .await
+            .wrap_err("Failed to initialize ArbitrageMonitor")?;
+
+            let mut arb_feed_rx = feed_tx.subscribe();
+            let mut arb_shutdown_rx = shutdown_tx.subscribe();
+
+            let handle = tokio::spawn(async move {
+                info!("Arbitrage monitor started");
+                arb_monitor
+                    .run(&mut arb_feed_rx, &mut arb_shutdown_rx)
+                    .await;
+                info!("Arbitrage monitor stopped");
+            });
+            protocol_handles.push(handle);
+        }
     }
 
     // --- Main block subscription loop ---
@@ -335,7 +387,7 @@ async fn main() -> Result<()> {
                 }
             }
             // Sequencer feed event - fastest signal for new transactions
-            Some(event) = feed_rx.recv() => {
+            Ok(event) = feed_rx.recv() => {
                 // Sequencer feed event received - a new transaction was sequenced.
                 // Notify protocol monitors to trigger an immediate rescan.
                 let _ = event;

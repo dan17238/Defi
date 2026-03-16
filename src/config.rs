@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub execution: ExecutionConfig,
     pub sequencer: SequencerConfig,
     pub monitoring: MonitoringConfig,
+    #[serde(default)]
+    pub arbitrage: Option<ArbitrageConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +94,29 @@ pub struct MonitoringConfig {
     #[serde(default = "default_dashboard_port")]
     pub dashboard_port: u16,
     pub log_level: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArbitrageConfig {
+    pub enabled: bool,
+    pub min_profit_usd: f64,
+    pub max_gas_price_gwei: f64,
+    pub flash_arbitrage_contract: String,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub pairs: Vec<ArbitragePairConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArbitragePairConfig {
+    pub name: String,
+    pub pool_a: String,
+    pub pool_b: String,
+    pub token0: String,
+    pub token1: String,
+    pub fee_a: u32,
+    pub fee_b: u32,
 }
 
 fn default_dashboard_port() -> u16 {

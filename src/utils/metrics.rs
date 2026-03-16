@@ -22,6 +22,10 @@ struct MetricsInner {
     positions_scanned: AtomicU64,
     total_latency_us: AtomicU64,
     latency_samples: AtomicU64,
+    // Arbitrage metrics
+    arb_count: AtomicU64,
+    arb_successful_count: AtomicU64,
+    arb_profit_usd_micros: AtomicU64,
     started_at: Instant,
 }
 
@@ -38,6 +42,9 @@ impl Metrics {
                 positions_scanned: AtomicU64::new(0),
                 total_latency_us: AtomicU64::new(0),
                 latency_samples: AtomicU64::new(0),
+                arb_count: AtomicU64::new(0),
+                arb_successful_count: AtomicU64::new(0),
+                arb_profit_usd_micros: AtomicU64::new(0),
                 started_at: Instant::now(),
             }),
         }
@@ -82,6 +89,31 @@ impl Metrics {
             .fetch_add(count, Ordering::Relaxed);
     }
 
+    /// Record an arbitrage attempt.
+    pub fn record_arbitrage(&self, profit_usd: f64, success: bool) {
+        self.inner.arb_count.fetch_add(1, Ordering::Relaxed);
+        if success {
+            self.inner
+                .arb_successful_count
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        let micros = (profit_usd * 1_000_000.0) as u64;
+        self.inner
+            .arb_profit_usd_micros
+            .fetch_add(micros, Ordering::Relaxed);
+    }
+
+    /// Get the total arbitrage attempt count.
+    pub fn arb_count(&self) -> u64 {
+        self.inner.arb_count.load(Ordering::Relaxed)
+    }
+
+    /// Get total arbitrage profit in USD.
+    pub fn arb_profit_usd(&self) -> f64 {
+        let micros = self.inner.arb_profit_usd_micros.load(Ordering::Relaxed);
+        micros as f64 / 1_000_000.0
+    }
+
     /// Get the current liquidation count.
     pub fn liquidation_count(&self) -> u64 {
         self.inner.liquidation_count.load(Ordering::Relaxed)
@@ -113,6 +145,8 @@ impl Metrics {
         info!(
             liquidations = self.liquidation_count(),
             total_profit_usd = self.total_profit_usd(),
+            arb_attempts = self.arb_count(),
+            arb_profit_usd = self.arb_profit_usd(),
             errors = self.error_count(),
             blocks = self.blocks_processed(),
             positions = self.positions_scanned(),
@@ -162,6 +196,8 @@ impl Metrics {
             "errors": self.error_count(),
             "blocks_processed": self.blocks_processed(),
             "positions_scanned": self.positions_scanned(),
+            "arb_attempts": self.arb_count(),
+            "arb_profit_usd": self.arb_profit_usd(),
             "uptime": uptime_str,
             "uptime_secs": uptime
         })
