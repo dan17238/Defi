@@ -318,12 +318,21 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             // New block received
-            Some(block) = block_stream.next() => {
-                let block_num = block.inner.number;
-                info!(block = block_num, "New block received");
-                // Update shared latest block number for protocol monitors
-                latest_block.store(block_num, Ordering::Release);
-                metrics.record_block_processed();
+            block_opt = block_stream.next() => {
+                match block_opt {
+                    Some(block) => {
+                        let block_num = block.inner.number;
+                        info!(block = block_num, "New block received");
+                        // Update shared latest block number for protocol monitors
+                        latest_block.store(block_num, Ordering::Release);
+                        metrics.record_block_processed();
+                    }
+                    None => {
+                        error!("Block subscription stream ended unexpectedly, shutting down");
+                        let _ = shutdown_tx.send(());
+                        break;
+                    }
+                }
             }
             // Sequencer feed event - fastest signal for new transactions
             Some(event) = feed_rx.recv() => {

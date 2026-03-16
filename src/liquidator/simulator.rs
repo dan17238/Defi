@@ -1,5 +1,7 @@
 use alloy::primitives::{address, Address, FixedBytes, TxKind, U256};
 use alloy::providers::Provider;
+use alloy::sol;
+use alloy::sol_types::SolEvent;
 use eyre::{Context, Result};
 use revm::database::{AlloyDB, BlockId, CacheDB, WrapDatabaseAsync};
 use revm::context_interface::JournalTr;
@@ -11,6 +13,18 @@ use tracing::{debug, info, warn};
 use crate::protocols::LiquidationOpportunity;
 
 use super::flash_loan;
+
+sol! {
+    event LiquidationExecuted(
+        uint8 indexed protocol,
+        address indexed user,
+        address collateralAsset,
+        address debtAsset,
+        uint256 debtRepaid,
+        uint256 collateralReceived,
+        uint256 profit
+    );
+}
 
 /// Key contract addresses to prewarm in the revm cache.
 /// Preloading these avoids RPC round-trips during simulation.
@@ -31,14 +45,9 @@ const PREWARM_ADDRESSES: &[Address] = &[
 /// Non-indexed data fields: collateralAsset (address), debtAsset (address),
 /// debtRepaid (uint256), collateralReceived (uint256), profit (uint256).
 /// Data layout: 5 * 32 = 160 bytes; profit is at bytes [128..160].
-const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = FixedBytes::new([
-    // Pre-computed keccak256 of the event signature.
-    // "LiquidationExecuted(uint8,address,address,address,uint256,uint256,uint256)"
-    0xb7, 0x1a, 0x24, 0x6a, 0x85, 0x3c, 0x6f, 0x84,
-    0x4e, 0x50, 0x71, 0xd4, 0x8e, 0xfe, 0x31, 0xa4,
-    0x32, 0xe7, 0x87, 0x31, 0x09, 0x16, 0xab, 0x5e,
-    0x9a, 0x0a, 0x5a, 0x2c, 0x3a, 0x1b, 0x56, 0x02,
-]);
+///
+/// Derived automatically from the sol! macro definition of LiquidationExecuted.
+const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = LiquidationExecuted::SIGNATURE_HASH;
 
 /// Result of a liquidation simulation via revm.
 #[derive(Debug, Clone)]

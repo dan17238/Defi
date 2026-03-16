@@ -5,10 +5,28 @@ use alloy::sol;
 use eyre::{Context, Result};
 use tracing::{debug, info, warn};
 
+use crate::liquidator::flash_loan::tokens;
 use crate::protocols::{LiquidationOpportunity, Protocol};
 use crate::provider;
 use crate::state::position_tracker::PositionTracker;
 use crate::utils::multicall::Multicall;
+
+/// Convert a raw token amount to an approximate USD value.
+///
+/// Uses the cached ETH price and a rough BTC price estimate to normalize
+/// amounts across tokens with different decimals.
+fn token_value_usd(amount: U256, token: Address) -> f64 {
+    let raw = amount.saturating_to::<u128>() as f64;
+    let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
+        .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+    let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
+    match token {
+        t if t == tokens::WETH => raw / 1e18 * eth_price,
+        t if t == tokens::WBTC => raw / 1e8 * 95_000.0,
+        t if t == tokens::DAI => raw / 1e18,
+        _ => raw / 1e6, // assume stablecoin with 6 decimals
+    }
+}
 
 // --------------------------------------------------------------------------
 // ABI definitions via the sol! macro
@@ -167,17 +185,19 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
         &self,
         user: Address,
         health_factor: U256,
-        total_debt_base: U256,
+        _total_debt_base: U256,
     ) -> Result<Option<LiquidationOpportunity>> {
         let reserves = self.fetch_reserves_list().await?;
         let data_provider = IPoolDataProvider::new(self.data_provider_address, &self.provider);
 
         let mut best_collateral = Address::ZERO;
         let mut best_debt = Address::ZERO;
-        let mut max_collateral = U256::ZERO;
-        let mut max_debt = U256::ZERO;
+        let mut max_collateral_usd: f64 = 0.0;
+        let mut max_debt_usd: f64 = 0.0;
+        let mut max_debt_raw = U256::ZERO;
 
         // Find the asset with the largest collateral and the largest debt for this user.
+        // Compare by USD value (not raw token amounts) to handle different decimals.
         for reserve in &reserves {
             let user_data = data_provider
                 .getUserReserveData(*reserve, user)
@@ -198,11 +218,12 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
             };
 
             // Collateral: aToken balance and usage as collateral enabled
-            if user_data.usageAsCollateralEnabled
-                && user_data.currentATokenBalance > max_collateral
-            {
-                max_collateral = user_data.currentATokenBalance;
-                best_collateral = *reserve;
+            if user_data.usageAsCollateralEnabled {
+                let collateral_usd = token_value_usd(user_data.currentATokenBalance, *reserve);
+                if collateral_usd > max_collateral_usd {
+                    max_collateral_usd = collateral_usd;
+                    best_collateral = *reserve;
+                }
             }
 
             // Debt: sum of stable + variable debt
@@ -210,13 +231,15 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
                 .currentStableDebt
                 .checked_add(user_data.currentVariableDebt)
                 .unwrap_or(U256::ZERO);
-            if total_debt > max_debt {
-                max_debt = total_debt;
+            let debt_usd = token_value_usd(total_debt, *reserve);
+            if debt_usd > max_debt_usd {
+                max_debt_usd = debt_usd;
+                max_debt_raw = total_debt;
                 best_debt = *reserve;
             }
         }
 
-        if best_collateral == Address::ZERO || best_debt == Address::ZERO || max_debt == U256::ZERO
+        if best_collateral == Address::ZERO || best_debt == Address::ZERO || max_debt_raw == U256::ZERO
         {
             debug!(user = %user, "No suitable collateral/debt pair found");
             return Ok(None);
@@ -231,16 +254,14 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
             0.5
         };
         let debt_to_cover = if health_factor < close_factor_threshold {
-            max_debt
+            max_debt_raw
         } else {
-            max_debt / U256::from(2)
+            max_debt_raw / U256::from(2)
         };
 
-        // Profit estimate using totalDebtBase from getUserAccountData.
-        // totalDebtBase is already denominated in the protocol's base currency (USD, 8 decimals).
+        // Profit estimate using the specific reserve's debt value (not the whole account).
         let estimated_bonus_bps: f64 = 500.0; // 5% placeholder
-        let debt_base_usd = total_debt_base.saturating_to::<u128>() as f64 / 1e8;
-        let estimated_profit_usd = debt_base_usd * close_factor * (estimated_bonus_bps / 10_000.0);
+        let estimated_profit_usd = max_debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
 
         if estimated_profit_usd < self.min_profit_usd {
             debug!(

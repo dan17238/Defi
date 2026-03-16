@@ -343,8 +343,8 @@ def _encode_multicall_health_factors(addresses):
     # Function selector
     encoded = AGGREGATE3_SELECTOR.replace('0x', '')
 
-    # Offset to the dynamic array
-    encoded += '0' * 63 + '20'  # offset = 32
+    # Offset to the dynamic array (32 = 0x20)
+    encoded += hex(32)[2:].zfill(64)
 
     # Array length
     n = len(calls)
@@ -360,9 +360,9 @@ def _encode_multicall_health_factors(addresses):
         # address (padded)
         t_enc = _pad_address(call['target'])
         # bool (padded)
-        t_enc += '0' * 63 + ('1' if call['allowFailure'] else '0')
+        t_enc += hex(1 if call['allowFailure'] else 0)[2:].zfill(64)
         # offset to bytes data (always 96 = 0x60 since 3 words for address, bool, offset)
-        t_enc += '0' * 63 + '60'
+        t_enc += hex(96)[2:].zfill(64)
         # bytes length
         cd = call['callData']
         byte_len = len(cd) // 2

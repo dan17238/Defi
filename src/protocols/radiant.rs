@@ -7,10 +7,28 @@ use alloy::sol;
 use eyre::{Context, Result};
 use tracing::{debug, info, warn};
 
+use crate::liquidator::flash_loan::tokens;
 use crate::protocols::{LiquidationOpportunity, Protocol};
 use crate::provider;
 use crate::state::position_tracker::PositionTracker;
 use crate::utils::multicall::Multicall;
+
+/// Convert a raw token amount to an approximate USD value.
+///
+/// Uses the cached ETH price and a rough BTC price estimate to normalize
+/// amounts across tokens with different decimals.
+fn token_value_usd(amount: U256, token: Address) -> f64 {
+    let raw = amount.saturating_to::<u128>() as f64;
+    let eth_price = CACHED_ETH_PRICE_CENTS
+        .load(Ordering::Relaxed) as f64 / 100.0;
+    let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
+    match token {
+        t if t == tokens::WETH => raw / 1e18 * eth_price,
+        t if t == tokens::WBTC => raw / 1e8 * 95_000.0,
+        t if t == tokens::DAI => raw / 1e18,
+        _ => raw / 1e6, // assume stablecoin with 6 decimals
+    }
+}
 
 /// Cached ETH price in USD cents (e.g., 350000 = $3500.00).
 /// Updated periodically from Chainlink oracle. Public so simulator can use it.
@@ -223,7 +241,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         &self,
         user: Address,
         health_factor: U256,
-        total_debt_eth: U256,
+        _total_debt_eth: U256,
     ) -> Result<Option<LiquidationOpportunity>> {
         let reserves = self.fetch_reserves_list().await?;
         let data_provider =
@@ -231,8 +249,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
 
         let mut best_collateral = Address::ZERO;
         let mut best_debt = Address::ZERO;
-        let mut max_collateral = U256::ZERO;
-        let mut max_debt = U256::ZERO;
+        let mut max_collateral_usd: f64 = 0.0;
+        let mut max_debt_usd: f64 = 0.0;
+        let mut max_debt_raw = U256::ZERO;
 
         for reserve in &reserves {
             let user_data = data_provider
@@ -253,24 +272,27 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                 }
             };
 
-            if user_data.usageAsCollateralEnabled
-                && user_data.currentATokenBalance > max_collateral
-            {
-                max_collateral = user_data.currentATokenBalance;
-                best_collateral = *reserve;
+            if user_data.usageAsCollateralEnabled {
+                let collateral_usd = token_value_usd(user_data.currentATokenBalance, *reserve);
+                if collateral_usd > max_collateral_usd {
+                    max_collateral_usd = collateral_usd;
+                    best_collateral = *reserve;
+                }
             }
 
             let total_debt = user_data
                 .currentStableDebt
                 .checked_add(user_data.currentVariableDebt)
                 .unwrap_or(U256::ZERO);
-            if total_debt > max_debt {
-                max_debt = total_debt;
+            let debt_usd = token_value_usd(total_debt, *reserve);
+            if debt_usd > max_debt_usd {
+                max_debt_usd = debt_usd;
+                max_debt_raw = total_debt;
                 best_debt = *reserve;
             }
         }
 
-        if best_collateral == Address::ZERO || best_debt == Address::ZERO || max_debt == U256::ZERO
+        if best_collateral == Address::ZERO || best_debt == Address::ZERO || max_debt_raw == U256::ZERO
         {
             debug!(user = %user, "No suitable Radiant collateral/debt pair found");
             return Ok(None);
@@ -278,16 +300,11 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
 
         // Radiant (AAVE v2 fork) close factor is 50%.
         let close_factor = 0.5;
-        let debt_to_cover = max_debt / U256::from(2);
+        let debt_to_cover = max_debt_raw / U256::from(2);
 
-        // Profit estimate using totalDebtETH from getUserAccountData.
-        // totalDebtETH is denominated in ETH (18 decimals). Convert to USD
-        // using Chainlink oracle price.
+        // Profit estimate using the specific reserve's debt value (not the whole account).
         let estimated_bonus_bps: f64 = 500.0;
-        let debt_eth = total_debt_eth.saturating_to::<u128>() as f64 / 1e18;
-        let eth_price_usd = Self::eth_price_usd();
-        let debt_usd = debt_eth * eth_price_usd;
-        let estimated_profit_usd = debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
+        let estimated_profit_usd = max_debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
 
         if estimated_profit_usd < self.min_profit_usd {
             debug!(

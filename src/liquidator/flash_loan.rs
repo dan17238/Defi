@@ -115,7 +115,7 @@ fn build_swap_path(collateral: Address, debt: Address) -> Bytes {
     ];
 
     // If either token is a major, single hop is fine
-    if majors.contains(&collateral) && majors.contains(&debt) {
+    if majors.contains(&collateral) || majors.contains(&debt) {
         return Bytes::new(); // empty = single hop
     }
 
