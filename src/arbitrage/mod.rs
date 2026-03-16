@@ -5,6 +5,7 @@ pub mod pool_state;
 
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Semaphore;
 
 use alloy::network::ReceiptResponse;
 use alloy::primitives::{Address, Bytes, FixedBytes, TxKind, I256, U256};
@@ -88,6 +89,8 @@ pub struct ArbitrageMonitor<R, E> {
     flash_arb_contract: Address,
     dashboard: ArbDashboard,
     inflight: Arc<DashSet<String>>,
+    /// Limits concurrent revm simulations to avoid overloading IPC/RPC.
+    sim_semaphore: Arc<Semaphore>,
 }
 
 impl<R, E> ArbitrageMonitor<R, E>
@@ -224,6 +227,7 @@ where
             flash_arb_contract,
             dashboard,
             inflight: Arc::new(DashSet::new()),
+            sim_semaphore: Arc::new(Semaphore::new(3)), // max 3 concurrent simulations
         })
     }
 
@@ -307,16 +311,22 @@ where
             opportunities.len()
         );
 
-        // 3. Process each opportunity: simulate then execute
-        for opp in opportunities {
-            if let Err(e) = self.process_opportunity(&opp).await {
-                debug!(
-                    pair = %opp.pair_name,
-                    error = %e,
-                    "Arbitrage opportunity not viable"
-                );
+        // 3. Process top opportunities with limited concurrency
+        // Sort by estimated spread (best first), cap at 4
+        let mut ranked = opportunities;
+        ranked.sort_by(|a, b| b.estimated_profit_bps.partial_cmp(&a.estimated_profit_bps).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.truncate(4);
+
+        let futs: Vec<_> = ranked.into_iter().map(|opp| {
+            let sem = self.sim_semaphore.clone();
+            async move {
+                let _permit = sem.acquire().await;
+                if let Err(e) = self.process_opportunity(&opp).await {
+                    debug!(pair = %opp.pair_name, error = %e, "Arbitrage opportunity not viable");
+                }
             }
-        }
+        }).collect();
+        futures::future::join_all(futs).await;
 
         let total_latency = start.elapsed();
         debug!(
