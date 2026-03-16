@@ -239,7 +239,7 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
         // Profit estimate using totalDebtBase from getUserAccountData.
         // totalDebtBase is already denominated in the protocol's base currency (USD, 8 decimals).
         let estimated_bonus_bps: f64 = 500.0; // 5% placeholder
-        let debt_base_usd = total_debt_base.to::<u128>() as f64 / 1e8;
+        let debt_base_usd = total_debt_base.saturating_to::<u128>() as f64 / 1e8;
         let estimated_profit_usd = debt_base_usd * close_factor * (estimated_bonus_bps / 10_000.0);
 
         if estimated_profit_usd < self.min_profit_usd {

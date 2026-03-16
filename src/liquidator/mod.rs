@@ -132,10 +132,10 @@ where
         }
 
         // Build and send the transaction
-        // Set minProfit to cover at least the flash loan premium (0.05% of debt)
-        // plus a safety margin (2x premium), so the on-chain contract reverts
+        // Set minProfit to cover the flash loan premium (0.09% for non-whitelisted)
+        // plus a 2x safety margin, so the on-chain contract reverts
         // rather than executing an unprofitable liquidation.
-        let flash_loan_premium = opportunity.debt_to_cover * U256::from(5) / U256::from(10000); // 0.05%
+        let flash_loan_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000); // 0.09%
         let min_profit = flash_loan_premium * U256::from(2); // 2x premium as safety margin
 
         let calldata = flash_loan::encode_flash_liquidation(

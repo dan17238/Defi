@@ -120,6 +120,9 @@ impl AppConfig {
         if self.execution.multicall_batch_size == 0 {
             eyre::bail!("execution.multicall_batch_size must be > 0");
         }
+        if self.contracts.flash_liquidator == "0x0000000000000000000000000000000000000000" {
+            eyre::bail!("contracts.flash_liquidator is zero address — deploy the contract first");
+        }
         Ok(())
     }
 

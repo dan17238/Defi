@@ -131,11 +131,16 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             Ok(result) => {
                 if result.len() >= 32 {
                     // Decode int256 (Chainlink returns price with 8 decimals)
-                    let price_raw = U256::from_be_slice(&result[..32]);
-                    let price_cents = (price_raw / U256::from(1_000_000)).to::<u64>();
-                    if price_cents > 0 {
-                        CACHED_ETH_PRICE_CENTS.store(price_cents, Ordering::Relaxed);
-                        debug!(eth_price_usd = price_cents as f64 / 100.0, "Updated ETH price from Chainlink");
+                    // Check high bit for negative (stale/circuit-breaker)
+                    if result[0] & 0x80 != 0 {
+                        warn!("Chainlink returned negative price, ignoring");
+                    } else {
+                        let price_raw = U256::from_be_slice(&result[..32]);
+                        let price_cents = (price_raw / U256::from(1_000_000)).saturating_to::<u64>();
+                        if price_cents > 100 && price_cents < 100_000_000 { // sanity: $1 - $1M
+                            CACHED_ETH_PRICE_CENTS.store(price_cents, Ordering::Relaxed);
+                            debug!(eth_price_usd = price_cents as f64 / 100.0, "Updated ETH price from Chainlink");
+                        }
                     }
                 }
             }
@@ -279,7 +284,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         // totalDebtETH is denominated in ETH (18 decimals). Convert to USD
         // using Chainlink oracle price.
         let estimated_bonus_bps: f64 = 500.0;
-        let debt_eth = total_debt_eth.to::<u128>() as f64 / 1e18;
+        let debt_eth = total_debt_eth.saturating_to::<u128>() as f64 / 1e18;
         let eth_price_usd = Self::eth_price_usd();
         let debt_usd = debt_eth * eth_price_usd;
         let estimated_profit_usd = debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
