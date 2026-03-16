@@ -171,8 +171,9 @@ impl ArbDashboard {
                     spread_bps: s.spread_bps,
                 });
             }
-            while hist.len() > MAX_SPREAD_HISTORY {
-                hist.remove(0);
+            let excess = hist.len().saturating_sub(MAX_SPREAD_HISTORY);
+            if excess > 0 {
+                hist.drain(..excess);
             }
         }
         if let Ok(mut p) = self.inner.pairs.lock() {

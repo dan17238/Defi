@@ -107,16 +107,19 @@ fn skip_rlp_list_header(data: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let first = data[0];
-    if first <= 0xf7 {
-        // Short list: length in first byte
+    if first >= 0xc0 && first <= 0xf7 {
+        // Short list: length = first - 0xc0
         Some(&data[1..])
-    } else {
+    } else if first > 0xf7 {
         // Long list: next (first - 0xf7) bytes encode the length
         let len_bytes = (first - 0xf7) as usize;
         if data.len() < 1 + len_bytes {
             return None;
         }
         Some(&data[1 + len_bytes..])
+    } else {
+        // Not a list (single byte or string) — malformed tx
+        None
     }
 }
 

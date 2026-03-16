@@ -36,6 +36,22 @@ use self::pool_state::PoolStateCache;
 
 use crate::config::ArbitrageRouteConfig;
 
+/// Known DEX router addresses on Arbitrum that route swaps through our pools.
+/// Transactions to these addresses can affect pool prices even though they
+/// don't target the pool directly.
+fn is_known_dex_router(addr: &Address) -> bool {
+    use alloy::primitives::address;
+    const ROUTERS: &[Address] = &[
+        address!("E592427A0AEce92De3Edee1F18E0157C05861564"), // UniV3 SwapRouter
+        address!("68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"), // UniV3 SwapRouter02
+        address!("3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"), // Universal Router
+        address!("1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"), // SushiSwap Router
+        address!("8A21F6768C1f8075791D08546Dadf6daA0bE820c"), // SushiSwap V3 Router
+        address!("c873fEcbd354f5A56E00E710B90EF4201db2448d"), // Camelot Router
+    ];
+    ROUTERS.contains(addr)
+}
+
 // ---------------------------------------------------------------------------
 // FlashArbitrage ABI (must match FlashArbitrage.sol)
 // ---------------------------------------------------------------------------
@@ -281,9 +297,10 @@ where
     /// is one of our monitored pools (or a known DEX router). This avoids
     /// wasting Multicall round-trips on unrelated transactions.
     async fn on_sequencer_event(&self, event: &SequencerEvent) {
-        // Fast-path filter: if we know the tx target and it's not a monitored pool, skip
+        // Fast-path filter: if we know the tx target and it's not a monitored pool
+        // or a known DEX router, skip. Most sequencer events are unrelated transfers/calls.
         if let Some(target) = &event.tx_to {
-            if !self.pool_cache.contains(target) {
+            if !self.pool_cache.contains(target) && !is_known_dex_router(target) {
                 return;
             }
         }

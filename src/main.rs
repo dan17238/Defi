@@ -145,17 +145,16 @@ async fn main() -> Result<()> {
     // Initialize metrics
     let metrics = Metrics::new();
 
-    // Clone exec_provider for the arb monitor before moving it into Liquidator.
-    // In the current alloy stack the cloned provider shares the cached nonce
-    // manager, so liquidation and arbitrage submissions stay on one nonce
-    // sequence instead of maintaining independent local counters.
-    let arb_exec_provider = exec_provider.clone();
+    // Wrap exec_provider in Arc so Liquidator and ArbitrageMonitor share the
+    // SAME NonceFiller instance. A plain .clone() creates an independent nonce
+    // cache, which causes nonce conflicts when both submit concurrently.
+    let shared_exec = Arc::new(exec_provider);
 
     // Initialize the liquidator orchestrator
     // read_provider is used for simulation; exec_provider for sending transactions.
     let liquidator = Arc::new(Liquidator::new(
         read_provider.clone(),
-        exec_provider,
+        shared_exec.clone(),
         config.execution.clone(),
         flash_liquidator_address,
         wallet_address,
@@ -335,7 +334,7 @@ async fn main() -> Result<()> {
 
             let arb_monitor = ArbitrageMonitor::new(
                 read_provider.clone(),
-                arb_exec_provider.clone(),
+                shared_exec.clone(),
                 arb_config.clone(),
                 wallet_address,
                 flash_arb_address,
