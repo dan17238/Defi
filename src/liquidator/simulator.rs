@@ -1,4 +1,4 @@
-use alloy::primitives::{address, Address, TxKind, U256};
+use alloy::primitives::{address, Address, FixedBytes, TxKind, U256};
 use alloy::providers::Provider;
 use eyre::{Context, Result};
 use revm::database::{AlloyDB, BlockId, CacheDB, WrapDatabaseAsync};
@@ -26,6 +26,20 @@ const PREWARM_ADDRESSES: &[Address] = &[
     address!("2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"), // WBTC
 ];
 
+/// keccak256("LiquidationExecuted(uint8,address,address,address,uint256,uint256,uint256)")
+/// Protocol is indexed (topic1), user is indexed (topic2).
+/// Non-indexed data fields: collateralAsset (address), debtAsset (address),
+/// debtRepaid (uint256), collateralReceived (uint256), profit (uint256).
+/// Data layout: 5 * 32 = 160 bytes; profit is at bytes [128..160].
+const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = FixedBytes::new([
+    // Pre-computed keccak256 of the event signature.
+    // "LiquidationExecuted(uint8,address,address,address,uint256,uint256,uint256)"
+    0xb7, 0x1a, 0x24, 0x6a, 0x85, 0x3c, 0x6f, 0x84,
+    0x4e, 0x50, 0x71, 0xd4, 0x8e, 0xfe, 0x31, 0xa4,
+    0x32, 0xe7, 0x87, 0x31, 0x09, 0x16, 0xab, 0x5e,
+    0x9a, 0x0a, 0x5a, 0x2c, 0x3a, 0x1b, 0x56, 0x02,
+]);
+
 /// Result of a liquidation simulation via revm.
 #[derive(Debug, Clone)]
 pub struct SimulationResult {
@@ -33,6 +47,9 @@ pub struct SimulationResult {
     pub profitable: bool,
     /// Estimated profit in USD (after gas costs).
     pub profit_usd: f64,
+    /// Actual profit in debt token units extracted from the LiquidationExecuted event.
+    /// Zero if the event was not found (falls back to estimate).
+    pub actual_profit_tokens: U256,
     /// Gas used by the simulated transaction.
     pub gas_used: u64,
     /// Whether the transaction reverted in simulation.
@@ -164,10 +181,38 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
 
         match exec_result {
             revm::context_interface::result::ExecutionResult::Success {
-                gas, ..
+                gas, logs, ..
             } => {
                 let gas_used = gas.used();
                 debug!(gas_used, "Simulation succeeded");
+
+                // --- Fix 1: Extract real profit from LiquidationExecuted event logs ---
+                // Parse event logs emitted during simulation to find the actual profit
+                // from the FlashLiquidator contract's LiquidationExecuted event.
+                //
+                // Event data layout (non-indexed fields):
+                //   [0..32]   collateralAsset (address, left-padded)
+                //   [32..64]  debtAsset (address, left-padded)
+                //   [64..96]  debtRepaid (uint256)
+                //   [96..128] collateralReceived (uint256)
+                //   [128..160] profit (uint256)
+                let mut actual_profit_tokens = U256::ZERO;
+                let mut found_event = false;
+
+                for log in &logs {
+                    if log.topics().first() == Some(&LIQUIDATION_EXECUTED_TOPIC) {
+                        let data = log.data.data.as_ref();
+                        if data.len() >= 160 {
+                            actual_profit_tokens = U256::from_be_slice(&data[128..160]);
+                            found_event = true;
+                            info!(
+                                profit_tokens = %actual_profit_tokens,
+                                "Extracted real profit from LiquidationExecuted event"
+                            );
+                        }
+                        break;
+                    }
+                }
 
                 // Estimate gas cost in USD.
                 // Use cached ETH price from Chainlink (updated by Radiant protocol monitor).
@@ -179,11 +224,40 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
                 let l1_data_cost_usd = 0.03;
                 let gas_cost_usd = gas_cost_eth * eth_price + l1_data_cost_usd;
-                let profit_usd = opportunity.expected_profit_usd - gas_cost_usd;
+
+                // If we found the real profit from the event, convert to USD and use it.
+                // Otherwise, fall back to the rough estimate from the opportunity.
+                let profit_usd = if found_event {
+                    // Convert token profit to USD.
+                    // For stablecoins (USDC, USDT) with 6 decimals: profit / 1e6.
+                    // For WETH (18 decimals): profit / 1e18 * eth_price.
+                    // For WBTC (8 decimals): profit / 1e8 * btc_price (use ~60k as fallback).
+                    // Heuristic: detect by debt asset address.
+                    let debt = opportunity.debt_asset;
+                    let profit_f64 = if debt == flash_loan::tokens::WETH {
+                        actual_profit_tokens.saturating_to::<u128>() as f64 / 1e18 * eth_price
+                    } else if debt == flash_loan::tokens::WBTC {
+                        actual_profit_tokens.saturating_to::<u128>() as f64 / 1e8 * 60_000.0
+                    } else {
+                        // Stablecoins (USDC, USDC.e, USDT, DAI) — 6 or 18 decimals.
+                        // USDC and USDT use 6 decimals; DAI uses 18.
+                        if debt == flash_loan::tokens::DAI {
+                            actual_profit_tokens.saturating_to::<u128>() as f64 / 1e18
+                        } else {
+                            // USDC, USDC.e, USDT — 6 decimals
+                            actual_profit_tokens.saturating_to::<u128>() as f64 / 1e6
+                        }
+                    };
+                    profit_f64 - gas_cost_usd
+                } else {
+                    // Fall back to rough estimate from opportunity data
+                    opportunity.expected_profit_usd - gas_cost_usd
+                };
 
                 Ok(SimulationResult {
                     profitable: profit_usd > 0.0,
                     profit_usd,
+                    actual_profit_tokens,
                     gas_used,
                     reverted: false,
                 })
@@ -198,6 +272,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 Ok(SimulationResult {
                     profitable: false,
                     profit_usd: 0.0,
+                    actual_profit_tokens: U256::ZERO,
                     gas_used,
                     reverted: true,
                 })
@@ -208,6 +283,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 Ok(SimulationResult {
                     profitable: false,
                     profit_usd: 0.0,
+                    actual_profit_tokens: U256::ZERO,
                     gas_used,
                     reverted: true,
                 })

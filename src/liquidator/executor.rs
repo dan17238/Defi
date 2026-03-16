@@ -1,15 +1,19 @@
 use alloy::primitives::{Address, Bytes, FixedBytes};
 use alloy::providers::Provider;
 use eyre::{Context, Result};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::utils::metrics::Metrics;
 
-/// Submits liquidation transactions on-chain and waits for confirmation.
+/// Submits liquidation transactions on-chain without blocking for confirmation.
 ///
 /// The provider must have a wallet signer attached so that transactions are
 /// signed before submission. It should point to the sequencer RPC for
 /// lowest-latency transaction submission.
+///
+/// After submission, the tx hash is returned immediately. The flash loan is
+/// atomic, so if it reverts on-chain we only lose gas (~$0.05). This lets
+/// the bot move to the next opportunity without waiting for a receipt.
 pub struct Executor<P> {
     provider: P,
     metrics: Metrics,
@@ -25,7 +29,10 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
 
     /// Build, sign, and send a transaction to the flash liquidator contract.
     ///
-    /// Returns the transaction hash on success.
+    /// Returns the transaction hash immediately after submission without
+    /// waiting for the receipt. The simulation already verified the
+    /// transaction will succeed; if it reverts on-chain the flash loan is
+    /// atomic so we only lose gas.
     pub async fn execute(
         &self,
         to: Address,
@@ -78,30 +85,14 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
         info!(
             tx_hash = %tx_hash,
             latency_ms = send_latency.as_millis() as u64,
-            "Transaction submitted to Sequencer, waiting for receipt"
+            "Transaction submitted to Sequencer (not waiting for receipt)"
         );
         self.metrics.record_latency_us(send_latency.as_micros() as u64);
 
-        // Wait for the transaction to be mined
-        let receipt = pending
-            .get_receipt()
-            .await
-            .wrap_err("Failed to get transaction receipt")?;
-
-        if receipt.status() {
-            info!(
-                tx_hash = %tx_hash,
-                block = ?receipt.block_number,
-                gas_used = ?receipt.gas_used,
-                "Transaction confirmed successfully"
-            );
-        } else {
-            eyre::bail!(
-                "Transaction {} reverted on-chain in block {:?}",
-                tx_hash,
-                receipt.block_number
-            );
-        }
+        // Do NOT wait for the receipt. The simulation already verified
+        // profitability, and the flash loan is atomic — on-chain revert only
+        // costs gas (~$0.05). Returning immediately lets the bot process the
+        // next opportunity without blocking.
 
         Ok(tx_hash)
     }

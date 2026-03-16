@@ -319,8 +319,11 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             .parse()
             .wrap_err("Invalid Radiant borrow event topic")?;
 
+        // Scan the last 2,400,000 blocks (~7 days on Arbitrum at ~250ms blocks)
+        // to capture a broader set of active borrowers.
         let latest = provider::get_latest_block_number(&self.provider).await?;
-        let from_block = latest.saturating_sub(50_000);
+        let scan_range: u64 = 2_400_000;
+        let from_block = latest.saturating_sub(scan_range);
 
         info!(
             protocol = "radiant",
@@ -329,14 +332,32 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             "Scanning for Borrow events to discover borrowers"
         );
 
-        let filter = Filter::new()
-            .address(self.pool_address)
-            .event_signature(borrow_topic)
-            .from_block(from_block)
-            .to_block(latest);
+        // Query in batches of 100,000 blocks to avoid RPC response size limits.
+        let batch_size: u64 = 100_000;
+        let mut logs = Vec::new();
+        let mut batch_start = from_block;
+        while batch_start <= latest {
+            let batch_end = (batch_start + batch_size - 1).min(latest);
+            let filter = Filter::new()
+                .address(self.pool_address)
+                .event_signature(borrow_topic)
+                .from_block(batch_start)
+                .to_block(batch_end);
 
-        let logs = self.provider.get_logs(&filter).await
-            .wrap_err("Failed to fetch Radiant Borrow event logs")?;
+            match self.provider.get_logs(&filter).await {
+                Ok(batch_logs) => logs.extend(batch_logs),
+                Err(e) => {
+                    warn!(
+                        protocol = "radiant",
+                        from = batch_start,
+                        to = batch_end,
+                        error = %e,
+                        "Failed to fetch Borrow logs for batch, continuing"
+                    );
+                }
+            }
+            batch_start = batch_end + 1;
+        }
 
         let mut count = 0usize;
         for log in &logs {

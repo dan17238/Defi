@@ -147,8 +147,12 @@ pub fn build_liquidation_params(
     let fee = select_swap_fee(opportunity.collateral_asset, opportunity.debt_asset);
     let path = build_swap_path(opportunity.collateral_asset, opportunity.debt_asset);
 
-    // 2% max slippage: minAmountOut = debtToCover * 98 / 100
-    let min_amount_out = opportunity.debt_to_cover * U256::from(98) / U256::from(100);
+    // The swap converts collateral -> debt tokens. We need enough debt tokens back
+    // to repay the flash loan (debt_to_cover) plus the flash loan premium (0.09%).
+    // Allow 2% slippage on top of that.
+    let premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000); // 0.09%
+    let needed = opportunity.debt_to_cover + premium;
+    let min_amount_out = needed * U256::from(98) / U256::from(100); // 2% slippage
 
     IFlashLiquidator::LiquidationParams {
         protocol: proto,

@@ -389,6 +389,10 @@ async fn run_protocol_monitor<Proto, R, E>(
     // to avoid overwhelming the RPC.
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
 
+    // Periodic borrower re-discovery interval (every 10 minutes) to catch new
+    // borrowers that appeared after the initial startup scan.
+    let mut discovery_interval = tokio::time::interval(std::time::Duration::from_secs(600));
+
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -461,6 +465,17 @@ async fn run_protocol_monitor<Proto, R, E>(
                         );
                         metrics.record_error();
                     }
+                }
+            }
+            // Periodic borrower re-discovery to catch new borrowers
+            _ = discovery_interval.tick() => {
+                info!(protocol = protocol.name(), "Running periodic borrower re-discovery");
+                if let Err(e) = protocol.discover_borrowers().await {
+                    warn!(
+                        protocol = protocol.name(),
+                        error = %e,
+                        "Periodic borrower discovery failed"
+                    );
                 }
             }
             _ = shutdown_rx.recv() => {

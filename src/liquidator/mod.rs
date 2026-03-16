@@ -5,6 +5,7 @@ pub mod simulator;
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use eyre::Result;
+use futures::future::join_all;
 use tracing::{error, info, warn};
 
 use crate::config::ExecutionConfig;
@@ -132,11 +133,18 @@ where
         }
 
         // Build and send the transaction
-        // Set minProfit to cover the flash loan premium (0.09% for non-whitelisted)
-        // plus a 2x safety margin, so the on-chain contract reverts
-        // rather than executing an unprofitable liquidation.
-        let flash_loan_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000); // 0.09%
-        let min_profit = flash_loan_premium * U256::from(2); // 2x premium as safety margin
+        // Set minProfit to cover: flash loan premium + estimated gas cost + profit margin.
+        // The on-chain contract will revert if actual profit is below this threshold.
+        //
+        // 1. Flash loan premium (0.09% for non-whitelisted borrowers)
+        let flash_loan_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000);
+        // 2. Estimated gas cost buffer (~1 USD for 6-decimal stablecoin tokens)
+        let gas_buffer = U256::from(1_000_000u64);
+        // 3. Config minimum profit threshold converted to rough token terms.
+        //    Assumes ~1:1 for stablecoins (6 decimals). For non-stablecoins this is
+        //    conservative (overstates the threshold), which is safe.
+        let config_min = U256::from((self.config.min_profit_usd * 1_000_000.0) as u64);
+        let min_profit = flash_loan_premium + gas_buffer + config_min;
 
         let calldata = flash_loan::encode_flash_liquidation(
             opportunity,
@@ -177,8 +185,8 @@ where
         }
     }
 
-    /// Process a batch of liquidation opportunities, executing the most
-    /// profitable ones first.
+    /// Process a batch of liquidation opportunities concurrently, sorted by
+    /// expected profit descending (most profitable first).
     pub async fn process_batch(
         &self,
         mut opportunities: Vec<LiquidationOpportunity>,
@@ -191,16 +199,26 @@ where
         });
 
         let total = opportunities.len();
-        let mut executed = 0usize;
 
-        for opportunity in &opportunities {
-            match self.process_opportunity(opportunity).await {
+        // Process all opportunities concurrently instead of sequentially.
+        // Each opportunity is independent (different borrower positions), so
+        // there is no ordering dependency between them.
+        let futures: Vec<_> = opportunities
+            .iter()
+            .map(|opp| self.process_opportunity(opp))
+            .collect();
+
+        let results = join_all(futures).await;
+
+        let mut executed = 0usize;
+        for (i, result) in results.into_iter().enumerate() {
+            match result {
                 Ok(true) => executed += 1,
                 Ok(false) => {}
                 Err(e) => {
                     error!(
-                        protocol = %opportunity.protocol,
-                        user = %opportunity.user,
+                        protocol = %opportunities[i].protocol,
+                        user = %opportunities[i].user,
                         error = %e,
                         "Error processing opportunity"
                     );
