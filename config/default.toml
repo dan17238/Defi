@@ -54,20 +54,100 @@ max_gas_price_gwei = 2.0
 flash_arbitrage_contract = "0x0000000000000000000000000000000000000000"
 dry_run = true
 
+# --- WETH/USDC pairs (native USDC) ---
 [[arbitrage.pairs]]
 name = "WETH/USDC 0.05% <> 0.3%"
 pool_a = "0xC6962004f452bE9203591991D15f6b388e09E8D0"
-pool_b = "0xC31E54c7a869B9FcBEcc14363CF510d1c41fa443"
+pool_b = "0xc473e2aEE3441BF9240bE85eb122aBB059A3b57C"
 token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 token1 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
 fee_a = 500
 fee_b = 3000
 
 [[arbitrage.pairs]]
+name = "WETH/USDC 0.05% <> 0.01%"
+pool_a = "0xC6962004f452bE9203591991D15f6b388e09E8D0"
+pool_b = "0x6f38e884725a116c9c7fbf208e79fe8828a2595f"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+fee_a = 500
+fee_b = 100
+
+# --- WETH/USDT pairs ---
+[[arbitrage.pairs]]
+name = "WETH/USDT 0.05% <> 0.3%"
+pool_a = "0x641c00a822e8b671738d32a431a4fb6074e5c79d"
+pool_b = "0xc82819f72a9e77e2c0c3a69b3196478f44303cf4"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+fee_a = 500
+fee_b = 3000
+
+# --- WETH/USDC.e pairs (bridged USDC) ---
+[[arbitrage.pairs]]
+name = "WETH/USDC.e 0.05% <> 0.3%"
+pool_a = "0xC31E54c7a869B9FcBEcc14363CF510d1c41fa443"
+pool_b = "0x17c14D2c404D167802b16C450d3c99F88F2c4F4d"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8"
+fee_a = 500
+fee_b = 3000
+
+# --- WBTC/WETH pairs ---
+[[arbitrage.pairs]]
 name = "WBTC/WETH 0.05% <> 0.3%"
 pool_a = "0x2f5e87C9312fa29aed5c179E456625D79015299c"
-pool_b = "0xa62aD78825e3a1eE34D37f9C1Fe8A37cAB5e65E9"
+pool_b = "0x149e36E72726e0BcEA5c59d40df2c43F60f5A22D"
 token0 = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
 token1 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
 fee_a = 500
 fee_b = 3000
+
+# --- ARB/WETH pairs ---
+[[arbitrage.pairs]]
+name = "WETH/ARB 0.05% <> 0.3%"
+pool_a = "0xc6f780497a95e246eb9449f5e4770916dcd6396a"
+pool_b = "0x92c63d0e701caae670c9415d91c474f686298f00"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0x912CE59144191C1204E64559FE8253a0e49E6548"
+fee_a = 500
+fee_b = 3000
+
+[[arbitrage.pairs]]
+name = "WETH/ARB 0.3% <> 0.01%"
+pool_a = "0x92c63d0e701caae670c9415d91c474f686298f00"
+pool_b = "0x89a4026e9ade251c67b7fb38054931a39936d9c5"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0x912CE59144191C1204E64559FE8253a0e49E6548"
+fee_a = 3000
+fee_b = 100
+
+# --- LINK/WETH pairs ---
+[[arbitrage.pairs]]
+name = "WETH/LINK 0.3% <> 0.05%"
+pool_a = "0x468b88941e7cc0b88c1869d68ab6b570bcef62ff"
+pool_b = "0x91308bc9ce8ca2db82aa30c65619856cc939d907"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4"
+fee_a = 3000
+fee_b = 500
+
+# --- WETH/DAI pairs ---
+[[arbitrage.pairs]]
+name = "WETH/DAI 0.05% <> 0.01%"
+pool_a = "0x31fa55e03bad93c7f8affdd2ec616ebfde246001"
+pool_b = "0x0779450b087a86c40e074ac00a65eabe1cbc0f87"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1"
+fee_a = 500
+fee_b = 100
+
+# --- Stablecoin pairs ---
+[[arbitrage.pairs]]
+name = "USDC/USDT 0.01% <> 0.05%"
+pool_a = "0xbe3ad6a5669dc0b8b12febc03608860c31e2eef6"
+pool_b = "0xbce73c2e5a623054b0e8e2428e956f4b9d0412a5"
+token0 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+fee_a = 100
+fee_b = 500
