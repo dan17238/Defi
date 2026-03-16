@@ -238,11 +238,19 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 // Otherwise, fall back to the rough estimate from the opportunity.
                 let profit_usd = if found_event {
                     // Convert token profit to USD using centralized token registry.
-                    let profit_f64 = flash_loan::tokens::token_value_usd(
+                    match flash_loan::tokens::token_value_usd(
                         actual_profit_tokens,
                         opportunity.debt_asset,
-                    );
-                    profit_f64 - gas_cost_usd
+                    ) {
+                        Some(profit_f64) => profit_f64 - gas_cost_usd,
+                        None => {
+                            debug!(
+                                debt_asset = %opportunity.debt_asset,
+                                "Unknown debt asset pricing, falling back to estimated USD profit"
+                            );
+                            opportunity.expected_profit_usd - gas_cost_usd
+                        }
+                    }
                 } else {
                     // Fall back to rough estimate from opportunity data
                     opportunity.expected_profit_usd - gas_cost_usd

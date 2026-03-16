@@ -13,7 +13,7 @@ use crate::utils::multicall::Multicall;
 
 /// Convert a raw token amount to approximate USD value.
 /// Delegates to centralized token registry in flash_loan::tokens.
-fn token_value_usd(amount: U256, token: Address) -> f64 {
+fn token_value_usd(amount: U256, token: Address) -> Option<f64> {
     tokens::token_value_usd(amount, token)
 }
 
@@ -208,10 +208,16 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
 
             // Collateral: aToken balance and usage as collateral enabled
             if user_data.usageAsCollateralEnabled {
-                let collateral_usd = token_value_usd(user_data.currentATokenBalance, *reserve);
-                if collateral_usd > max_collateral_usd {
-                    max_collateral_usd = collateral_usd;
-                    best_collateral = *reserve;
+                if let Some(collateral_usd) = token_value_usd(user_data.currentATokenBalance, *reserve) {
+                    if collateral_usd > max_collateral_usd {
+                        max_collateral_usd = collateral_usd;
+                        best_collateral = *reserve;
+                    }
+                } else {
+                    debug!(
+                        reserve = %reserve,
+                        "Skipping AAVE collateral reserve with unknown pricing"
+                    );
                 }
             }
 
@@ -220,11 +226,17 @@ impl<P: Provider + Clone + Send + Sync> AaveV3Protocol<P> {
                 .currentStableDebt
                 .checked_add(user_data.currentVariableDebt)
                 .unwrap_or(U256::ZERO);
-            let debt_usd = token_value_usd(total_debt, *reserve);
-            if debt_usd > max_debt_usd {
-                max_debt_usd = debt_usd;
-                max_debt_raw = total_debt;
-                best_debt = *reserve;
+            if let Some(debt_usd) = token_value_usd(total_debt, *reserve) {
+                if debt_usd > max_debt_usd {
+                    max_debt_usd = debt_usd;
+                    max_debt_raw = total_debt;
+                    best_debt = *reserve;
+                }
+            } else {
+                debug!(
+                    reserve = %reserve,
+                    "Skipping AAVE debt reserve with unknown pricing"
+                );
             }
         }
 

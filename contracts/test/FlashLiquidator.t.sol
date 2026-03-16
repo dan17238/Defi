@@ -3,8 +3,12 @@ pragma solidity ^0.8.20;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FlashLiquidator} from "../src/FlashLiquidator.sol";
+import {IAaveV3Pool, IFlashLoanSimpleReceiver} from "../src/interfaces/IAaveV3Pool.sol";
+import {IRadiantLendingPool, IFlashLoanReceiver} from "../src/interfaces/IRadiantPool.sol";
+import {SwapHelper} from "../src/libraries/SwapHelper.sol";
 
 /// @dev Simple ERC20 mock for unit tests (no fork needed)
 contract MockERC20 is ERC20 {
@@ -43,6 +47,7 @@ contract FlashLiquidatorTest is Test {
     // Protocol addresses
     address constant AAVE_V3_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
     address constant RADIANT_LENDING_POOL = 0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1;
+    uint24 constant UNISWAP_WETH_USDC_FEE = 500;
 
     function setUp() public {
         deployer = address(this);
@@ -282,49 +287,82 @@ contract FlashLiquidatorTest is Test {
     //             FORK INTEGRATION TESTS (require Arbitrum RPC)
     // =========================================================================
 
-    /// @notice Integration test: full AAVE v3 flash loan liquidation flow
-    /// @dev Requires ARBITRUM_RPC_URL env var. Run with: forge test --fork-url $ARBITRUM_RPC_URL
-    function test_fork_aaveV3FlashLoan_fullFlow() public {
-        // Skip if no fork URL available
-        try vm.createSelectFork("arbitrum") {
-            // Re-deploy on the fork
-            liquidator = new FlashLiquidator();
+    /// @notice End-to-end fork test for the Aave flash loan path.
+    /// @dev Uses real Arbitrum token/router state and a mocked pool at the live pool address
+    ///      so we can deterministically test flash loan -> liquidation -> swap -> repayment.
+    function test_fork_aaveFlashLoan_executesSwapRepaysPoolAndPaysOwner() public {
+        if (!_createArbitrumFork()) return;
 
-            // Verify the AAVE v3 pool is accessible
-            uint128 premium = 0;
-            try IAaveV3PoolMinimal(AAVE_V3_POOL).FLASHLOAN_PREMIUM_TOTAL() returns (uint128 p) {
-                premium = p;
-            } catch {
-                // If the call fails, the pool might have a different interface version
-            }
+        MockAaveV3Pool pool = _installMockAavePool();
 
-            // Verify we can read the premium (should be 5 bps = 0.05%)
-            assertTrue(premium <= 100, "Flash loan premium seems too high");
+        uint256 debtToCover = 1_000e6;
+        uint256 premium = debtToCover * 9 / 10_000;
+        uint256 collateralOut = 2 ether;
+        address borrower = makeAddr("aaveBorrower");
 
-            console2.log("AAVE v3 flash loan premium (bps):", premium);
-        } catch {
-            console2.log("Skipping fork test: ARBITRUM_RPC_URL not configured");
-        }
+        deal(USDC, AAVE_V3_POOL, 50_000e6);
+        deal(WETH, AAVE_V3_POOL, collateralOut);
+
+        pool.configure(WETH, USDC, borrower, debtToCover, collateralOut, 9);
+
+        FlashLiquidator.LiquidationParams memory params = _baseParams(
+            FlashLiquidator.Protocol.AaveV3, borrower, debtToCover, premium
+        );
+
+        uint256 ownerUsdcBefore = IERC20(USDC).balanceOf(deployer);
+        uint256 poolUsdcBefore = IERC20(USDC).balanceOf(AAVE_V3_POOL);
+
+        liquidator.liquidateWithAaveFlashLoan(params);
+
+        uint256 ownerProfit = IERC20(USDC).balanceOf(deployer) - ownerUsdcBefore;
+        uint256 poolUsdcAfter = IERC20(USDC).balanceOf(AAVE_V3_POOL);
+
+        assertGe(ownerProfit, params.minProfit, "owner should receive realized profit");
+        assertEq(
+            poolUsdcAfter,
+            poolUsdcBefore + debtToCover + premium,
+            "pool should receive repaid debt plus flash loan premium"
+        );
+        assertEq(IERC20(USDC).balanceOf(address(liquidator)), 0, "contract should not retain debt tokens");
+        assertEq(IERC20(WETH).balanceOf(address(liquidator)), 0, "contract should not retain collateral");
     }
 
-    /// @notice Integration test: verify Radiant pool is accessible on fork
-    function test_fork_radiantPool_accessible() public {
-        try vm.createSelectFork("arbitrum") {
-            liquidator = new FlashLiquidator();
+    /// @notice End-to-end fork test for the Radiant flash loan path.
+    function test_fork_radiantFlashLoan_executesSwapRepaysPoolAndPaysOwner() public {
+        if (!_createArbitrumFork()) return;
 
-            uint256 premium = 0;
-            try IRadiantPoolMinimal(RADIANT_LENDING_POOL).FLASHLOAN_PREMIUM_TOTAL() returns (uint256 p) {
-                premium = p;
-            } catch {
-                // Pool might not be accessible or has different interface
-            }
+        MockRadiantPool pool = _installMockRadiantPool();
 
-            assertTrue(premium <= 100, "Flash loan premium seems too high");
+        uint256 debtToCover = 1_000e6;
+        uint256 premium = debtToCover * 9 / 10_000;
+        uint256 collateralOut = 2 ether;
+        address borrower = makeAddr("radiantBorrower");
 
-            console2.log("Radiant flash loan premium (bps):", premium);
-        } catch {
-            console2.log("Skipping fork test: ARBITRUM_RPC_URL not configured");
-        }
+        deal(USDC, RADIANT_LENDING_POOL, 50_000e6);
+        deal(WETH, RADIANT_LENDING_POOL, collateralOut);
+
+        pool.configure(WETH, USDC, borrower, debtToCover, collateralOut, 9);
+
+        FlashLiquidator.LiquidationParams memory params = _baseParams(
+            FlashLiquidator.Protocol.Radiant, borrower, debtToCover, premium
+        );
+
+        uint256 ownerUsdcBefore = IERC20(USDC).balanceOf(deployer);
+        uint256 poolUsdcBefore = IERC20(USDC).balanceOf(RADIANT_LENDING_POOL);
+
+        liquidator.liquidateWithRadiantFlashLoan(params);
+
+        uint256 ownerProfit = IERC20(USDC).balanceOf(deployer) - ownerUsdcBefore;
+        uint256 poolUsdcAfter = IERC20(USDC).balanceOf(RADIANT_LENDING_POOL);
+
+        assertGe(ownerProfit, params.minProfit, "owner should receive realized profit");
+        assertEq(
+            poolUsdcAfter,
+            poolUsdcBefore + debtToCover + premium,
+            "pool should receive repaid debt plus flash loan premium"
+        );
+        assertEq(IERC20(USDC).balanceOf(address(liquidator)), 0, "contract should not retain debt tokens");
+        assertEq(IERC20(WETH).balanceOf(address(liquidator)), 0, "contract should not retain collateral");
     }
 
     // =========================================================================
@@ -342,13 +380,185 @@ contract FlashLiquidatorTest is Test {
         uint256 expectedWithdraw = amount > balance ? balance : amount;
         assertEq(ownerAfter - ownerBefore, expectedWithdraw);
     }
+
+    function _createArbitrumFork() internal returns (bool) {
+        string memory rpcUrl;
+
+        try vm.envString("ARBITRUM_RPC_URL") returns (string memory url) {
+            rpcUrl = url;
+        } catch {
+            console2.log("Skipping fork test: ARBITRUM_RPC_URL not configured");
+            return false;
+        }
+
+        vm.createSelectFork(rpcUrl);
+        liquidator = new FlashLiquidator();
+        return true;
+    }
+
+    function _installMockAavePool() internal returns (MockAaveV3Pool pool) {
+        MockAaveV3Pool implementation = new MockAaveV3Pool();
+        vm.etch(AAVE_V3_POOL, address(implementation).code);
+        pool = MockAaveV3Pool(AAVE_V3_POOL);
+    }
+
+    function _installMockRadiantPool() internal returns (MockRadiantPool pool) {
+        MockRadiantPool implementation = new MockRadiantPool();
+        vm.etch(RADIANT_LENDING_POOL, address(implementation).code);
+        pool = MockRadiantPool(RADIANT_LENDING_POOL);
+    }
+
+    function _baseParams(
+        FlashLiquidator.Protocol protocol,
+        address borrower,
+        uint256 debtToCover,
+        uint256 premium
+    ) internal pure returns (FlashLiquidator.LiquidationParams memory params) {
+        params.protocol = protocol;
+        params.collateralAsset = WETH;
+        params.debtAsset = USDC;
+        params.user = borrower;
+        params.debtToCover = debtToCover;
+        params.swapDex = SwapHelper.DEX.UniswapV3;
+        params.swapFee = UNISWAP_WETH_USDC_FEE;
+        params.minProfit = 100e6;
+        params.swapPath = "";
+        params.siloAddress = address(0);
+        params.minAmountOut = debtToCover + premium;
+    }
 }
 
-// Minimal interfaces for fork tests
-interface IAaveV3PoolMinimal {
-    function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint128);
+contract MockAaveV3Pool {
+    using SafeERC20 for IERC20;
+
+    address public collateralAsset;
+    address public debtAsset;
+    address public expectedUser;
+    uint256 public expectedDebtToCover;
+    uint256 public collateralOut;
+    uint128 public premiumBps;
+
+    function configure(
+        address collateralAsset_,
+        address debtAsset_,
+        address expectedUser_,
+        uint256 expectedDebtToCover_,
+        uint256 collateralOut_,
+        uint128 premiumBps_
+    ) external {
+        collateralAsset = collateralAsset_;
+        debtAsset = debtAsset_;
+        expectedUser = expectedUser_;
+        expectedDebtToCover = expectedDebtToCover_;
+        collateralOut = collateralOut_;
+        premiumBps = premiumBps_;
+    }
+
+    function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint128) {
+        return premiumBps;
+    }
+
+    function flashLoanSimple(
+        address receiverAddress,
+        address asset,
+        uint256 amount,
+        bytes calldata params,
+        uint16
+    ) external {
+        uint256 premium = amount * premiumBps / 10_000;
+        IERC20(asset).safeTransfer(receiverAddress, amount);
+
+        bool ok = IFlashLoanSimpleReceiver(receiverAddress).executeOperation(
+            asset, amount, premium, receiverAddress, params
+        );
+        require(ok, "callback failed");
+
+        IERC20(asset).safeTransferFrom(receiverAddress, address(this), amount + premium);
+    }
+
+    function liquidationCall(address collateralAsset_, address debtAsset_, address user, uint256 debtToCover, bool)
+        external
+    {
+        require(collateralAsset_ == collateralAsset, "bad collateral");
+        require(debtAsset_ == debtAsset, "bad debt asset");
+        require(user == expectedUser, "bad user");
+        require(debtToCover == expectedDebtToCover, "bad debt amount");
+
+        IERC20(debtAsset_).safeTransferFrom(msg.sender, address(this), debtToCover);
+        IERC20(collateralAsset_).safeTransfer(msg.sender, collateralOut);
+    }
 }
 
-interface IRadiantPoolMinimal {
-    function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint256);
+contract MockRadiantPool {
+    using SafeERC20 for IERC20;
+
+    address public collateralAsset;
+    address public debtAsset;
+    address public expectedUser;
+    uint256 public expectedDebtToCover;
+    uint256 public collateralOut;
+    uint256 public premiumBps;
+
+    function configure(
+        address collateralAsset_,
+        address debtAsset_,
+        address expectedUser_,
+        uint256 expectedDebtToCover_,
+        uint256 collateralOut_,
+        uint256 premiumBps_
+    ) external {
+        collateralAsset = collateralAsset_;
+        debtAsset = debtAsset_;
+        expectedUser = expectedUser_;
+        expectedDebtToCover = expectedDebtToCover_;
+        collateralOut = collateralOut_;
+        premiumBps = premiumBps_;
+    }
+
+    function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint256) {
+        return premiumBps;
+    }
+
+    function flashLoan(
+        address receiverAddress,
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata,
+        address,
+        bytes calldata params,
+        uint16
+    ) external {
+        _flashLoan(receiverAddress, assets[0], amounts[0], params);
+    }
+
+    function _flashLoan(address receiverAddress, address asset, uint256 amount, bytes calldata params) internal {
+        uint256 premium = amount * premiumBps / 10_000;
+        address[] memory assets = new address[](1);
+        assets[0] = asset;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        uint256[] memory premiums = new uint256[](1);
+        premiums[0] = premium;
+
+        IERC20(asset).safeTransfer(receiverAddress, amount);
+
+        bool ok = IFlashLoanReceiver(receiverAddress).executeOperation(
+            assets, amounts, premiums, receiverAddress, params
+        );
+        require(ok, "callback failed");
+
+        IERC20(asset).safeTransferFrom(receiverAddress, address(this), amount + premium);
+    }
+
+    function liquidationCall(address collateralAsset_, address debtAsset_, address user, uint256 debtToCover, bool)
+        external
+    {
+        require(collateralAsset_ == collateralAsset, "bad collateral");
+        require(debtAsset_ == debtAsset, "bad debt asset");
+        require(user == expectedUser, "bad user");
+        require(debtToCover == expectedDebtToCover, "bad debt amount");
+
+        IERC20(debtAsset_).safeTransferFrom(msg.sender, address(this), debtToCover);
+        IERC20(collateralAsset_).safeTransfer(msg.sender, collateralOut);
+    }
 }

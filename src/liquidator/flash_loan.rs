@@ -72,7 +72,7 @@ pub const DEX_CAMELOT: u8 = 1;
 
 /// Well-known token addresses on Arbitrum.
 pub mod tokens {
-    use alloy::primitives::{address, Address};
+    use alloy::primitives::{address, Address, U256};
 
     pub const WETH: Address = address!("82aF49447D8a07e3bd95BD0d56f35241523fBab1");
     pub const USDC: Address = address!("af88d065e77c8cC2239327C5EDb3A432268e5831");
@@ -87,44 +87,56 @@ pub mod tokens {
     pub const MAGIC: Address = address!("539bdE0d7Dbd336b79148AA742883198BBF60342");
     pub const FRAX: Address = address!("17FC002b466eEc40DaE837Fc4bE5c67993ddBd6F");
 
-    /// Token info: (decimals, approximate USD price).
-    /// Price is a rough estimate used for comparison/sorting, not for exact profit.
-    /// ETH price is fetched from Chainlink and cached; others use static estimates.
-    pub fn token_info(addr: Address) -> (u8, f64) {
+    fn eth_price_usd() -> f64 {
         let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
             .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
-        let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
+        if eth_price > 100.0 { eth_price } else { 3500.0 }
+    }
 
+    /// Token info: (decimals, approximate USD price).
+    /// Price is a rough estimate used for comparison/sorting, not for exact profit.
+    /// Returns None for unsupported assets so callers can skip them conservatively.
+    pub fn token_info(addr: Address) -> Option<(u8, f64)> {
+        let eth_price = eth_price_usd();
         match addr {
-            a if a == WETH => (18, eth_price),
-            a if a == WSTETH => (18, eth_price * 1.05), // ~5% premium over ETH
-            a if a == WBTC => (8, 95_000.0),
-            a if a == USDC => (6, 1.0),
-            a if a == USDC_E => (6, 1.0),
-            a if a == USDT => (6, 1.0),
-            a if a == DAI => (18, 1.0),
-            a if a == FRAX => (18, 1.0),
-            a if a == ARB => (18, 1.1),
-            a if a == LINK => (18, 18.0),
-            a if a == GMX => (18, 30.0),
-            a if a == MAGIC => (18, 0.5),
-            _ => (18, 1.0), // unknown 18-decimal token, assume $1 (conservative)
+            a if a == WETH => Some((18, eth_price)),
+            a if a == WSTETH => Some((18, eth_price * 1.05)),
+            a if a == WBTC => Some((8, 95_000.0)),
+            a if a == USDC => Some((6, 1.0)),
+            a if a == USDC_E => Some((6, 1.0)),
+            a if a == USDT => Some((6, 1.0)),
+            a if a == DAI => Some((18, 1.0)),
+            a if a == FRAX => Some((18, 1.0)),
+            a if a == ARB => Some((18, 1.1)),
+            a if a == LINK => Some((18, 18.0)),
+            a if a == GMX => Some((18, 30.0)),
+            a if a == MAGIC => Some((18, 0.5)),
+            _ => None,
         }
     }
 
     /// Convert raw token amount to approximate USD value.
-    pub fn token_value_usd(amount: alloy::primitives::U256, addr: Address) -> f64 {
-        let (decimals, price) = token_info(addr);
+    pub fn token_value_usd(amount: U256, addr: Address) -> Option<f64> {
+        let (decimals, price) = token_info(addr)?;
         let raw = amount.saturating_to::<u128>() as f64;
-        (raw / 10f64.powi(decimals as i32)) * price
+        Some((raw / 10f64.powi(decimals as i32)) * price)
+    }
+
+    /// Convert a USD threshold into raw token units, rounding up so on-chain
+    /// protection is never weaker than the configured USD floor.
+    pub fn usd_to_token_units(addr: Address, usd: f64) -> Option<U256> {
+        if usd <= 0.0 {
+            return Some(U256::ZERO);
+        }
+
+        let (decimals, price) = token_info(addr)?;
+        let units = ((usd * 10f64.powi(decimals as i32)) / price).ceil();
+        Some(U256::from(units as u128))
     }
 
     /// How many raw token units equal ~$1.
-    pub fn one_dollar_in_tokens(addr: Address) -> alloy::primitives::U256 {
-        let (decimals, price) = token_info(addr);
-        let price = if price > 0.0 { price } else { 1.0 };
-        let units = 10f64.powi(decimals as i32) / price;
-        alloy::primitives::U256::from(units as u128)
+    pub fn one_dollar_in_tokens(addr: Address) -> Option<U256> {
+        usd_to_token_units(addr, 1.0)
     }
 }
 
@@ -191,11 +203,12 @@ pub fn build_liquidation_params(
     let path = build_swap_path(opportunity.collateral_asset, opportunity.debt_asset);
 
     // The swap converts collateral -> debt tokens. We need enough debt tokens back
-    // to repay the flash loan (debt_to_cover) plus the flash loan premium (0.09%).
-    // Allow 2% slippage on top of that.
+    // to repay the flash loan principal plus the flash loan premium (0.09%).
+    // This floor must stay at or above the full repayment amount; otherwise the
+    // swap can succeed but the flash loan settlement will still revert later.
     let premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000); // 0.09%
     let needed = opportunity.debt_to_cover + premium;
-    let min_amount_out = needed * U256::from(98) / U256::from(100); // 2% slippage
+    let min_amount_out = needed;
 
     IFlashLiquidator::LiquidationParams {
         protocol: proto,
@@ -245,5 +258,85 @@ pub fn encode_flash_liquidation(
     match opportunity.protocol.as_str() {
         "radiant" => encode_radiant_flash_liquidation(opportunity, min_profit),
         _ => encode_aave_flash_liquidation(opportunity, min_profit),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy::primitives::{address, U256};
+    use std::sync::atomic::Ordering;
+
+    use super::tokens;
+    use crate::protocols::LiquidationOpportunity;
+
+    fn set_eth_price_for_tests() {
+        crate::protocols::radiant::CACHED_ETH_PRICE_CENTS.store(400_000, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn usd_to_token_units_preserves_sub_dollar_stable_thresholds() {
+        set_eth_price_for_tests();
+
+        assert_eq!(
+            tokens::usd_to_token_units(tokens::USDC, 0.5),
+            Some(U256::from(500_000u64))
+        );
+        assert_eq!(
+            tokens::usd_to_token_units(tokens::DAI, 0.5),
+            Some(U256::from(500_000_000_000_000_000u128))
+        );
+    }
+
+    #[test]
+    fn usd_to_token_units_uses_token_price_not_decimal_bucket() {
+        set_eth_price_for_tests();
+
+        assert_eq!(
+            tokens::usd_to_token_units(tokens::WETH, 1.0),
+            Some(U256::from(250_000_000_000_000u128))
+        );
+        assert_eq!(
+            tokens::usd_to_token_units(tokens::DAI, 1.0),
+            Some(U256::from(1_000_000_000_000_000_000u128))
+        );
+    }
+
+    #[test]
+    fn token_value_usd_handles_18_decimal_non_stables() {
+        set_eth_price_for_tests();
+
+        let one_arb = U256::from(1_000_000_000_000_000_000u128);
+        let arb_value = tokens::token_value_usd(one_arb, tokens::ARB).unwrap();
+        assert!((arb_value - 1.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn unsupported_tokens_do_not_get_fake_pricing() {
+        let unknown = address!("1111111111111111111111111111111111111111");
+
+        assert_eq!(tokens::token_info(unknown), None);
+        assert_eq!(tokens::token_value_usd(U256::from(1u64), unknown), None);
+        assert_eq!(tokens::usd_to_token_units(unknown, 1.0), None);
+    }
+
+    #[test]
+    fn liquidation_params_require_full_flash_loan_repayment() {
+        let opportunity = LiquidationOpportunity {
+            protocol: "aave_v3".to_string(),
+            user: address!("2222222222222222222222222222222222222222"),
+            collateral_asset: tokens::WETH,
+            debt_asset: tokens::USDC,
+            debt_to_cover: U256::from(1_000_000u64),
+            expected_profit_usd: 100.0,
+            health_factor: U256::from(900_000_000_000_000_000u128),
+        };
+
+        let params = super::build_liquidation_params(&opportunity, U256::ZERO);
+        let expected_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000);
+
+        assert_eq!(
+            params.minAmountOut,
+            opportunity.debt_to_cover + expected_premium
+        );
     }
 }

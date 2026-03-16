@@ -141,14 +141,28 @@ where
 
         // 2. Compute ~$1 worth in debt token units using centralized token registry.
         //    This correctly handles all tokens (WETH, WBTC, DAI, ARB, LINK, stablecoins).
-        let one_dollar = flash_loan::tokens::one_dollar_in_tokens(opportunity.debt_asset);
+        let one_dollar = match flash_loan::tokens::one_dollar_in_tokens(opportunity.debt_asset) {
+            Some(value) => value,
+            None => {
+                warn!(
+                    protocol = %opportunity.protocol,
+                    user = %opportunity.user,
+                    debt_asset = %opportunity.debt_asset,
+                    "Skipping opportunity with unsupported debt asset pricing"
+                );
+                return Ok(false);
+            }
+        };
 
         // 2b. Gas buffer: ~$1 worth of the debt token
         let gas_buffer = one_dollar;
         // 3. Config minimum profit threshold in token terms.
         //    Multiply by 10 then divide by 10 to preserve one decimal (e.g. 0.5 -> 5/10).
-        let config_min_x10 = (self.config.min_profit_usd * 10.0) as u64;
-        let config_min = one_dollar * U256::from(config_min_x10) / U256::from(10u64);
+        let config_min = flash_loan::tokens::usd_to_token_units(
+            opportunity.debt_asset,
+            self.config.min_profit_usd,
+        )
+        .unwrap_or(U256::ZERO);
         let min_profit = flash_loan_premium + gas_buffer + config_min;
 
         let calldata = flash_loan::encode_flash_liquidation(
