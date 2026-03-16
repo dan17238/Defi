@@ -1,9 +1,30 @@
-use alloy::primitives::{Address, Bytes, FixedBytes};
+use std::sync::Arc;
+use std::time::Duration;
+
+use alloy::network::ReceiptResponse;
+use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::providers::Provider;
+use alloy::sol;
+use alloy::sol_types::SolEvent;
+use dashmap::DashSet;
 use eyre::{Context, Result};
 use tracing::{debug, info, warn};
 
 use crate::utils::metrics::Metrics;
+
+sol! {
+    event LiquidationExecuted(
+        uint8 indexed protocol,
+        address indexed user,
+        address collateralAsset,
+        address debtAsset,
+        uint256 debtRepaid,
+        uint256 collateralReceived,
+        uint256 profit
+    );
+}
+
+const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = LiquidationExecuted::SIGNATURE_HASH;
 
 /// Submits liquidation transactions on-chain without blocking for confirmation.
 ///
@@ -19,7 +40,7 @@ pub struct Executor<P> {
     metrics: Metrics,
 }
 
-impl<P: Provider + Clone + Send + Sync> Executor<P> {
+impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
     pub fn new(provider: P, metrics: Metrics) -> Self {
         Self { provider, metrics }
     }
@@ -35,6 +56,8 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
         to: Address,
         calldata: Bytes,
         max_gas_price_gwei: f64,
+        inflight: Arc<DashSet<String>>,
+        inflight_key: String,
     ) -> Result<FixedBytes<32>> {
         // Check current gas price and bail if too high
         let gas_price = self
@@ -87,12 +110,100 @@ impl<P: Provider + Clone + Send + Sync> Executor<P> {
         self.metrics
             .record_latency_us(send_latency.as_micros() as u64);
 
-        // Do NOT wait for the receipt. The simulation already verified
-        // profitability, and the flash loan is atomic — on-chain revert only
-        // costs gas (~$0.05). Returning immediately lets the bot process the
-        // next opportunity without blocking.
+        let metrics = self.metrics.clone();
+        let tx_hash_for_task = tx_hash;
+        tokio::spawn(async move {
+            let receipt_result =
+                tokio::time::timeout(Duration::from_secs(45), pending.get_receipt()).await;
+            match receipt_result {
+                Ok(Ok(receipt)) if receipt.status() => {
+                    let gas_cost_usd =
+                        Self::gas_cost_usd(receipt.gas_used(), receipt.effective_gas_price());
+                    let gross_profit_usd = Self::extract_realized_profit(&receipt);
+                    if gross_profit_usd.is_none() {
+                        warn!(
+                            tx_hash = %tx_hash_for_task,
+                            "Confirmed liquidation tx missing LiquidationExecuted profit data; recording gas-only net profit"
+                        );
+                    }
+                    let net_profit_usd = gross_profit_usd.unwrap_or(0.0) - gas_cost_usd;
+                    metrics.record_liquidation_success(net_profit_usd);
+                    info!(
+                        tx_hash = %tx_hash_for_task,
+                        gas_used = receipt.gas_used(),
+                        net_profit_usd,
+                        "Liquidation tx confirmed"
+                    );
+                }
+                Ok(Ok(receipt)) => {
+                    metrics.record_error();
+                    warn!(
+                        tx_hash = %tx_hash_for_task,
+                        gas_used = receipt.gas_used(),
+                        "Liquidation tx reverted on-chain"
+                    );
+                }
+                Ok(Err(e)) => {
+                    metrics.record_error();
+                    warn!(
+                        tx_hash = %tx_hash_for_task,
+                        error = %e,
+                        "Failed to fetch liquidation receipt"
+                    );
+                }
+                Err(_) => {
+                    metrics.record_error();
+                    warn!(
+                        tx_hash = %tx_hash_for_task,
+                        "Timed out waiting for liquidation receipt"
+                    );
+                }
+            }
+
+            inflight.remove(&inflight_key);
+        });
 
         Ok(tx_hash)
+    }
+
+    fn extract_realized_profit(receipt: &alloy::rpc::types::TransactionReceipt) -> Option<f64> {
+        for log in receipt.inner.logs() {
+            if log.topics().first() == Some(&LIQUIDATION_EXECUTED_TOPIC) {
+                let data = log.data().data.as_ref();
+                if let Some((debt_asset, profit_tokens)) = Self::decode_profit_event_data(data) {
+                    return crate::liquidator::flash_loan::tokens::token_value_usd(
+                        profit_tokens,
+                        debt_asset,
+                    );
+                }
+            }
+        }
+        None
+    }
+
+    fn decode_profit_event_data(data: &[u8]) -> Option<(Address, U256)> {
+        if data.len() < 160 {
+            return None;
+        }
+        let debt_asset = Address::from_slice(&data[44..64]);
+        let profit_tokens = U256::from_be_slice(&data[128..160]);
+        Some((debt_asset, profit_tokens))
+    }
+
+    fn eth_price_usd() -> f64 {
+        let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
+            .load(std::sync::atomic::Ordering::Relaxed) as f64
+            / 100.0;
+        if eth_price > 100.0 {
+            eth_price
+        } else {
+            3500.0
+        }
+    }
+
+    fn gas_cost_usd(gas_used: u64, gas_price_wei: u128) -> f64 {
+        let gas_cost_eth = gas_used as f64 * gas_price_wei as f64 / 1e18;
+        gas_cost_eth * Self::eth_price_usd()
     }
 
     /// Estimate gas for a liquidation call without sending it.

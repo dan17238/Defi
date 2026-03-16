@@ -16,7 +16,7 @@ pub struct Metrics {
 struct MetricsInner {
     liquidation_count: AtomicU64,
     successful_count: AtomicU64,
-    total_profit_usd_micros: AtomicU64,
+    total_profit_usd_micros: AtomicI64,
     error_count: AtomicU64,
     blocks_processed: AtomicU64,
     positions_scanned: AtomicU64,
@@ -36,7 +36,7 @@ impl Metrics {
             inner: Arc::new(MetricsInner {
                 liquidation_count: AtomicU64::new(0),
                 successful_count: AtomicU64::new(0),
-                total_profit_usd_micros: AtomicU64::new(0),
+                total_profit_usd_micros: AtomicI64::new(0),
                 error_count: AtomicU64::new(0),
                 blocks_processed: AtomicU64::new(0),
                 positions_scanned: AtomicU64::new(0),
@@ -55,7 +55,21 @@ impl Metrics {
         if success {
             self.inner.successful_count.fetch_add(1, Ordering::Relaxed);
         }
-        let micros = (profit_usd * 1_000_000.0) as u64;
+        let micros = (profit_usd * 1_000_000.0).round() as i64;
+        self.inner
+            .total_profit_usd_micros
+            .fetch_add(micros, Ordering::Relaxed);
+    }
+
+    /// Record an on-chain liquidation submission attempt.
+    pub fn record_liquidation_attempt(&self) {
+        self.inner.liquidation_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a confirmed successful liquidation and its realized profit.
+    pub fn record_liquidation_success(&self, profit_usd: f64) {
+        self.inner.successful_count.fetch_add(1, Ordering::Relaxed);
+        let micros = (profit_usd * 1_000_000.0).round() as i64;
         self.inner
             .total_profit_usd_micros
             .fetch_add(micros, Ordering::Relaxed);

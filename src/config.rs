@@ -162,6 +162,11 @@ impl AppConfig {
         if self.contracts.flash_liquidator == "0x0000000000000000000000000000000000000000" {
             eyre::bail!("contracts.flash_liquidator is zero address — deploy the contract first");
         }
+        if let Some(silo) = &self.protocols.silo {
+            if silo.enabled {
+                eyre::bail!("protocols.silo.enabled=true but Silo support is not implemented yet");
+            }
+        }
         if let Some(arb) = &self.arbitrage {
             if arb.enabled {
                 if arb.flash_arbitrage_contract == "0x0000000000000000000000000000000000000000" {
@@ -188,5 +193,61 @@ impl AppConfig {
         let var_name = &self.wallet.private_key_env;
         std::env::var(var_name)
             .wrap_err_with(|| format!("Environment variable '{}' not set", var_name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_config() -> AppConfig {
+        AppConfig {
+            rpc: RpcConfig {
+                http_url: "http://localhost:8545".to_string(),
+                ws_url: "ws://localhost:8546".to_string(),
+                ipc_path: None,
+            },
+            wallet: WalletConfig {
+                private_key_env: "TEST_KEY".to_string(),
+            },
+            contracts: ContractsConfig {
+                flash_liquidator: "0x1111111111111111111111111111111111111111".to_string(),
+            },
+            protocols: ProtocolsConfig {
+                aave_v3: None,
+                radiant: None,
+                silo: Some(SiloConfig {
+                    enabled: false,
+                    lens: "0x0000000000000000000000000000000000000001".to_string(),
+                    repository: "0x0000000000000000000000000000000000000002".to_string(),
+                    min_profit_usd: 1.0,
+                }),
+            },
+            execution: ExecutionConfig {
+                dry_run: true,
+                max_gas_price_gwei: 1.0,
+                min_profit_usd: 0.5,
+                multicall_batch_size: 100,
+            },
+            sequencer: SequencerConfig {
+                feed_url: "wss://example.com/feed".to_string(),
+                rpc_url: "https://example.com/rpc".to_string(),
+            },
+            monitoring: MonitoringConfig {
+                metrics_port: 9090,
+                dashboard_port: 3000,
+                log_level: "info".to_string(),
+            },
+            arbitrage: None,
+        }
+    }
+
+    #[test]
+    fn rejects_enabled_silo_until_implemented() {
+        let mut config = base_config();
+        config.protocols.silo.as_mut().unwrap().enabled = true;
+
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("Silo support is not implemented"));
     }
 }

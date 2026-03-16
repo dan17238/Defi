@@ -83,6 +83,7 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     error InvalidAmount();
     error InvalidPoolPair();
     error InvalidRoute();
+    error ZeroAddress();
     error InsufficientProfit(uint256 actual, uint256 required);
 
     // =========================================================================
@@ -208,6 +209,7 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
 
     /// @notice Initiate 2-step ownership transfer
     function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
         pendingOwner = newOwner;
     }
 

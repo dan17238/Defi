@@ -3,6 +3,7 @@ pub mod detector;
 pub mod pairs;
 pub mod pool_state;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use alloy::network::ReceiptResponse;
@@ -11,6 +12,7 @@ use alloy::providers::Provider;
 use alloy::rpc::types::{TransactionInput, TransactionRequest};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
+use dashmap::DashSet;
 use eyre::{Context, Result};
 use revm::context_interface::JournalTr;
 use revm::database::{AlloyDB, BlockId, CacheDB, WrapDatabaseAsync};
@@ -85,6 +87,7 @@ pub struct ArbitrageMonitor<R, E> {
     wallet_address: Address,
     flash_arb_contract: Address,
     dashboard: ArbDashboard,
+    inflight: Arc<DashSet<String>>,
 }
 
 impl<R, E> ArbitrageMonitor<R, E>
@@ -220,7 +223,23 @@ where
             wallet_address,
             flash_arb_contract,
             dashboard,
+            inflight: Arc::new(DashSet::new()),
         })
+    }
+
+    fn opportunity_key(opp: &ArbitrageOpportunity) -> String {
+        let pools = opp
+            .pools
+            .iter()
+            .map(|pool| format!("{pool:#x}"))
+            .collect::<Vec<_>>()
+            .join(">");
+        let directions = opp
+            .zero_for_one
+            .iter()
+            .map(|zfo| if *zfo { '1' } else { '0' })
+            .collect::<String>();
+        format!("{}:{}:{}", opp.pair_name, pools, directions)
     }
 
     /// Main event loop: listens for sequencer feed events and shutdown signal.
@@ -349,6 +368,15 @@ where
             return Ok(());
         }
 
+        let inflight_key = Self::opportunity_key(opp);
+        if !self.inflight.insert(inflight_key.clone()) {
+            debug!(
+                pair = %opp.pair_name,
+                "Skipping duplicate arbitrage while previous tx is still in flight"
+            );
+            return Ok(());
+        }
+
         // Execute on-chain
         match self
             .send_arb_tx(
@@ -356,6 +384,7 @@ where
                 sim_result.selected_gas_price_gwei,
                 opp.pair_name.clone(),
                 sim_result.profit_usd,
+                inflight_key.clone(),
             )
             .await
         {
@@ -369,6 +398,7 @@ where
                 );
             }
             Err(e) => {
+                self.inflight.remove(&inflight_key);
                 error!(pair = %opp.pair_name, error = %e, "Failed to submit arb tx");
                 self.metrics.record_error();
             }
@@ -550,6 +580,7 @@ where
         gas_price_gwei: f64,
         pair_name: String,
         expected_profit_usd: f64,
+        inflight_key: String,
     ) -> Result<FixedBytes<32>> {
         let gas_price_wei = (gas_price_gwei * 1e9).round() as u128;
 
@@ -580,6 +611,7 @@ where
 
         let metrics = self.metrics.clone();
         let dash = self.dashboard.clone();
+        let inflight = self.inflight.clone();
         let tx_str = format!("{tx_hash:#x}");
         dash.record_submitted(
             &pair_name,
@@ -589,8 +621,10 @@ where
         );
 
         tokio::spawn(async move {
-            match pending.get_receipt().await {
-                Ok(receipt) if receipt.status() => {
+            match tokio::time::timeout(std::time::Duration::from_secs(45), pending.get_receipt())
+                .await
+            {
+                Ok(Ok(receipt)) if receipt.status() => {
                     let gas_cost_usd =
                         Self::gas_cost_usd(receipt.gas_used(), receipt.effective_gas_price());
                     let gross_profit_usd = Self::extract_realized_profit(&receipt);
@@ -611,16 +645,21 @@ where
                         "Arb tx confirmed"
                     );
                 }
-                Ok(receipt) => {
+                Ok(Ok(receipt)) => {
                     metrics.record_error();
                     dash.record_reverted(&pair_name, &tx_str, receipt.gas_used());
                     warn!(pair = %pair_name, tx = %tx_hash, gas_used = receipt.gas_used(), "Arb tx reverted on-chain");
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     metrics.record_error();
                     warn!(pair = %pair_name, tx = %tx_hash, error = %e, "Failed to fetch arb receipt");
                 }
+                Err(_) => {
+                    metrics.record_error();
+                    warn!(pair = %pair_name, tx = %tx_hash, "Timed out waiting for arb receipt");
+                }
             }
+            inflight.remove(&inflight_key);
         });
 
         Ok(tx_hash)

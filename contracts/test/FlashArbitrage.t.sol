@@ -203,6 +203,31 @@ contract FlashArbitrageTest is Test {
         flashArb.executeArbitrage(params);
     }
 
+    function test_transferOwnership_twoStep() public {
+        address newOwner = makeAddr("newOwner");
+
+        flashArb.transferOwnership(newOwner);
+        assertEq(flashArb.pendingOwner(), newOwner);
+        assertEq(flashArb.owner(), deployer);
+
+        vm.prank(newOwner);
+        flashArb.acceptOwnership();
+
+        assertEq(flashArb.owner(), newOwner);
+        assertEq(flashArb.pendingOwner(), address(0));
+    }
+
+    function test_transferOwnership_revertsForZeroAddress() public {
+        vm.expectRevert(FlashArbitrage.ZeroAddress.selector);
+        flashArb.transferOwnership(address(0));
+    }
+
+    function test_acceptOwnership_revertsForNonPendingOwner() public {
+        vm.prank(attacker);
+        vm.expectRevert(FlashArbitrage.OnlyOwner.selector);
+        flashArb.acceptOwnership();
+    }
+
     function test_emergencyWithdraw_onlyOwner() public {
         vm.prank(attacker);
         vm.expectRevert(FlashArbitrage.OnlyOwner.selector);

@@ -145,11 +145,10 @@ async fn main() -> Result<()> {
     // Initialize metrics
     let metrics = Metrics::new();
 
-    // Clone exec_provider for arb monitor BEFORE moving into Liquidator.
-    // Both share the same wallet — the NonceFiller inside the provider
-    // queries the chain nonce on each send, so concurrent sends risk
-    // nonce collisions. In practice, liquidation and arbitrage rarely
-    // fire simultaneously, and a collision only costs gas (~$0.04).
+    // Clone exec_provider for the arb monitor before moving it into Liquidator.
+    // In the current alloy stack the cloned provider shares the cached nonce
+    // manager, so liquidation and arbitrage submissions stay on one nonce
+    // sequence instead of maintaining independent local counters.
     let arb_exec_provider = exec_provider.clone();
 
     // Initialize the liquidator orchestrator
@@ -455,7 +454,7 @@ async fn run_protocol_monitor<Proto, R, E>(
 ) where
     Proto: Protocol,
     R: Provider + Clone + Send + Sync,
-    E: Provider + Clone + Send + Sync,
+    E: Provider + Clone + Send + Sync + 'static,
 {
     // Run initial borrower discovery before entering the scan loop (Fix 6).
     info!(

@@ -4,8 +4,10 @@ pub mod simulator;
 
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
+use dashmap::DashSet;
 use eyre::Result;
 use futures::future::join_all;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::config::ExecutionConfig;
@@ -29,12 +31,13 @@ pub struct Liquidator<R, E> {
     config: ExecutionConfig,
     metrics: Metrics,
     flash_liquidator_address: Address,
+    inflight: Arc<DashSet<String>>,
 }
 
 impl<R, E> Liquidator<R, E>
 where
     R: Provider + Clone + Send + Sync,
-    E: Provider + Clone + Send + Sync,
+    E: Provider + Clone + Send + Sync + 'static,
 {
     pub fn new(
         read_provider: R,
@@ -50,7 +53,18 @@ where
             config,
             metrics,
             flash_liquidator_address,
+            inflight: Arc::new(DashSet::new()),
         }
+    }
+
+    fn opportunity_key(opportunity: &LiquidationOpportunity) -> String {
+        format!(
+            "{}:{:#x}:{:#x}:{:#x}",
+            opportunity.protocol,
+            opportunity.user,
+            opportunity.collateral_asset,
+            opportunity.debt_asset
+        )
     }
 
     /// Process a single liquidation opportunity.
@@ -125,8 +139,17 @@ where
                 profit_usd = sim_result.profit_usd,
                 "DRY RUN: Would execute liquidation"
             );
-            self.metrics.record_liquidation(sim_result.profit_usd, true);
-            return Ok(true);
+            return Ok(false);
+        }
+
+        let inflight_key = Self::opportunity_key(opportunity);
+        if !self.inflight.insert(inflight_key.clone()) {
+            info!(
+                protocol = %opportunity.protocol,
+                user = %opportunity.user,
+                "Skipping duplicate liquidation while previous tx is still in flight"
+            );
+            return Ok(false);
         }
 
         // Build and send the transaction
@@ -174,10 +197,13 @@ where
                 self.flash_liquidator_address,
                 calldata,
                 self.config.max_gas_price_gwei,
+                self.inflight.clone(),
+                inflight_key.clone(),
             )
             .await
         {
             Ok(tx_hash) => {
+                self.metrics.record_liquidation_attempt();
                 info!(
                     protocol = %opportunity.protocol,
                     user = %opportunity.user,
@@ -185,10 +211,10 @@ where
                     profit_usd = sim_result.profit_usd,
                     "Liquidation executed successfully"
                 );
-                self.metrics.record_liquidation(sim_result.profit_usd, true);
                 Ok(true)
             }
             Err(e) => {
+                self.inflight.remove(&inflight_key);
                 error!(
                     protocol = %opportunity.protocol,
                     user = %opportunity.user,
