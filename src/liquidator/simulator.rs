@@ -231,14 +231,8 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 // Use cached ETH price from Chainlink (updated by Radiant protocol monitor).
                 // Arbitrum L2 gas ~0.1 gwei + L1 data posting ~$0.03 per tx.
                 let gas_price_gwei = 0.1_f64;
-                let gas_cost_eth = gas_used as f64 * gas_price_gwei / 1e9;
-                let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    as f64
-                    / 100.0;
-                let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
-                let l1_data_cost_usd = 0.03;
-                let gas_cost_usd = gas_cost_eth * eth_price + l1_data_cost_usd;
+                let gas_cost_usd =
+                    crate::utils::gas::arbitrum_gas_cost_usd_from_gwei(gas_used, gas_price_gwei);
 
                 // If we found the real profit from the event, convert to USD and use it.
                 // Otherwise, fall back to the rough estimate from the opportunity.

@@ -45,6 +45,14 @@ pub struct ProtocolsConfig {
     pub silo: Option<SiloConfig>,
 }
 
+impl ProtocolsConfig {
+    pub fn any_enabled(&self) -> bool {
+        self.aave_v3.as_ref().is_some_and(|cfg| cfg.enabled)
+            || self.radiant.as_ref().is_some_and(|cfg| cfg.enabled)
+            || self.silo.as_ref().is_some_and(|cfg| cfg.enabled)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AaveV3Config {
     pub enabled: bool,
@@ -159,7 +167,9 @@ impl AppConfig {
         if self.execution.multicall_batch_size == 0 {
             eyre::bail!("execution.multicall_batch_size must be > 0");
         }
-        if self.contracts.flash_liquidator == "0x0000000000000000000000000000000000000000" {
+        if self.protocols.any_enabled()
+            && self.contracts.flash_liquidator == "0x0000000000000000000000000000000000000000"
+        {
             eyre::bail!("contracts.flash_liquidator is zero address — deploy the contract first");
         }
         if let Some(silo) = &self.protocols.silo {
@@ -249,5 +259,48 @@ mod tests {
 
         let err = config.validate().unwrap_err().to_string();
         assert!(err.contains("Silo support is not implemented"));
+    }
+
+    #[test]
+    fn allows_zero_flash_liquidator_when_only_arbitrage_is_enabled() {
+        let mut config = base_config();
+        config.contracts.flash_liquidator =
+            "0x0000000000000000000000000000000000000000".to_string();
+        config.arbitrage = Some(ArbitrageConfig {
+            enabled: true,
+            min_profit_usd: 0.5,
+            max_gas_price_gwei: 1.0,
+            flash_arbitrage_contract: "0x2222222222222222222222222222222222222222".to_string(),
+            dry_run: true,
+            pairs: vec![ArbitragePairConfig {
+                name: "test".to_string(),
+                pool_a: "0x1111111111111111111111111111111111111111".to_string(),
+                pool_b: "0x2222222222222222222222222222222222222222".to_string(),
+                token0: "0x3333333333333333333333333333333333333333".to_string(),
+                token1: "0x4444444444444444444444444444444444444444".to_string(),
+                fee_a: 500,
+                fee_b: 3000,
+            }],
+            routes: vec![],
+        });
+
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn rejects_zero_flash_liquidator_when_liquidation_is_enabled() {
+        let mut config = base_config();
+        config.contracts.flash_liquidator =
+            "0x0000000000000000000000000000000000000000".to_string();
+        config.protocols.aave_v3 = Some(AaveV3Config {
+            enabled: true,
+            pool: "0x1111111111111111111111111111111111111111".to_string(),
+            data_provider: "0x2222222222222222222222222222222222222222".to_string(),
+            min_profit_usd: 1.0,
+            extra_reserves: vec![],
+        });
+
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("flash_liquidator is zero address"));
     }
 }

@@ -331,7 +331,11 @@ where
         // 3. Process top opportunities with limited concurrency
         // Sort by estimated spread (best first), cap at 4
         let mut ranked = opportunities;
-        ranked.sort_by(|a, b| b.estimated_profit_bps.partial_cmp(&a.estimated_profit_bps).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.sort_by(|a, b| {
+            b.estimated_profit_bps
+                .partial_cmp(&a.estimated_profit_bps)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         ranked.truncate(4);
 
         let futs: Vec<_> = ranked.into_iter().map(|opp| {
@@ -410,10 +414,14 @@ where
             None => {
                 // All multipliers failed — try the seed one more time for dashboard recording
                 let calldata = self.encode_arb_calldata(opp, min_profit_tokens)?;
-                let sim = self.simulate_arbitrage(calldata.clone(), opp).await
+                let sim = self
+                    .simulate_arbitrage(calldata.clone(), opp)
+                    .await
                     .wrap_err("revm simulation failed")?;
                 self.dashboard.record_simulated(
-                    &opp.pair_name, sim.profit_usd, sim.gas_used,
+                    &opp.pair_name,
+                    sim.profit_usd,
+                    sim.gas_used,
                     sim.reverted || !sim.profitable,
                 );
                 return Ok(());
@@ -421,7 +429,10 @@ where
         };
 
         self.dashboard.record_simulated(
-            &opp.pair_name, sim_result.profit_usd, sim_result.gas_used, false,
+            &opp.pair_name,
+            sim_result.profit_usd,
+            sim_result.gas_used,
+            false,
         );
 
         // bracket search already ensured sim_result.profitable == true
@@ -699,8 +710,10 @@ where
                 .await
             {
                 Ok(Ok(receipt)) if receipt.status() => {
-                    let gas_cost_usd =
-                        Self::gas_cost_usd(receipt.gas_used(), receipt.effective_gas_price());
+                    let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(
+                        receipt.gas_used(),
+                        receipt.effective_gas_price(),
+                    );
                     let gross_profit_usd = Self::extract_realized_profit(&receipt);
                     if gross_profit_usd.is_none() {
                         warn!(
@@ -764,22 +777,6 @@ where
         let token_profit = Address::from_slice(&data[12..32]);
         let profit_tokens = U256::from_be_slice(&data[32..64]);
         Some((token_profit, profit_tokens))
-    }
-
-    fn eth_price_usd() -> f64 {
-        let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-            .load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 100.0;
-        if eth_price > 100.0 {
-            eth_price
-        } else {
-            3500.0
-        }
-    }
-
-    fn gas_cost_usd(gas_used: u64, gas_price_wei: u128) -> f64 {
-        let gas_cost_eth = gas_used as f64 * gas_price_wei as f64 / 1e18;
-        gas_cost_eth * Self::eth_price_usd()
     }
 
     fn display_pool_price(sqrt_price_x96: &U256, token0: Address, token1: Address) -> f64 {
@@ -1061,11 +1058,7 @@ fn estimate_net_profit_after_gas(
 ) -> (f64, f64) {
     let selected_gas_price_gwei = select_gas_price(gross_profit_usd, max_gwei);
     let gas_price_wei = (selected_gas_price_gwei * 1e9).round() as u128;
-    let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-        .load(std::sync::atomic::Ordering::Relaxed) as f64
-        / 100.0;
-    let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
-    let gas_cost_usd = gas_used as f64 * gas_price_wei as f64 / 1e18 * eth_price;
+    let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(gas_used, gas_price_wei);
     (selected_gas_price_gwei, gross_profit_usd - gas_cost_usd)
 }
 

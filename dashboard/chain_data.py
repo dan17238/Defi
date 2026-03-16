@@ -11,12 +11,16 @@ RPC_PATH = '/rpc'
 
 AAVE_V3_POOL = '0x794a61358D6845594F94dc1DB02A252b5b4814aD'.lower()
 RADIANT_POOL = '0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1'.lower()
+ETH_USD_APPROX = 3500.0
 
 # LiquidationCall(address,address,address,uint256,uint256,address,bool)
 LIQUIDATION_TOPIC = '0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286'
 
-# Borrow(address,address,address,uint256,uint256,uint256,uint16)
-BORROW_TOPIC = '0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0'
+# AAVE v3 Borrow(address,address,address,uint256,uint8,uint256,uint16)
+AAVE_BORROW_TOPIC = '0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0'
+
+# Radiant (AAVE v2 fork) Borrow(address,address,address,uint256,uint256,uint256,uint16)
+RADIANT_BORROW_TOPIC = '0xc6a898309e823ee50bac64e45ca8adba6690e99e7841c45d754e2a38e9019d9b'
 
 MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11'
 AGGREGATE3_SELECTOR = '0x82ad56cb'
@@ -41,6 +45,11 @@ TOKENS = {
     "0x5979d7b546e38e9ab5011956dea6f53c2ba11622": ("wstETH", 18),
     "0x539bde0d7dbd336b79148aa742883198bbf60342": ("MAGIC", 18),
     "0x17fc002b466eec40dae837fc4be5c67993ddbd6f": ("FRAX", 18),
+}
+
+PROTOCOL_POOLS = {
+    'AAVE V3': AAVE_V3_POOL,
+    'Radiant': RADIANT_POOL,
 }
 
 # ─── Shared state ───
@@ -176,6 +185,18 @@ def _format_usd(raw_value):
         return f"${value:,.2f}"
 
 
+def _format_eth_base_value_as_usd(raw_value):
+    """Format a Radiant ETH-denominated account value as approximate USD."""
+    value_eth = raw_value / (10 ** 18)
+    value_usd = value_eth * ETH_USD_APPROX
+    if value_usd >= 1_000_000:
+        return f"${value_usd:,.0f}"
+    elif value_usd >= 1_000:
+        return f"${value_usd:,.0f}"
+    else:
+        return f"${value_usd:,.2f}"
+
+
 def _time_ago(block_number, current_block):
     """Estimate time ago from block difference (Arbitrum ~250ms blocks)."""
     diff = current_block - block_number
@@ -279,21 +300,30 @@ def _parse_liquidation_event(log, current_block):
 # ─── Borrow event fetching ───
 
 def _fetch_borrow_logs(current_block):
-    """Fetch Borrow events from AAVE v3 to find active borrowers, in batches."""
+    """Fetch Borrow events from supported protocols to find active borrowers."""
     from_block = max(0, current_block - SCAN_BLOCKS)
     all_logs = []
     batch_size = 100000
-    start = from_block
-    while start < current_block:
-        end = min(start + batch_size, current_block)
-        logs = _get_logs(AAVE_V3_POOL, [BORROW_TOPIC], start, end)
-        all_logs.extend(logs)
-        start = end + 1
+    protocols = [
+        ('AAVE V3', AAVE_V3_POOL, AAVE_BORROW_TOPIC),
+        ('Radiant', RADIANT_POOL, RADIANT_BORROW_TOPIC),
+    ]
+
+    for protocol, pool, topic in protocols:
+        start = from_block
+        while start < current_block:
+            end = min(start + batch_size, current_block)
+            logs = _get_logs(pool, [topic], start, end)
+            for log in logs:
+                log['_protocol'] = protocol
+                log['_pool'] = pool
+            all_logs.extend(logs)
+            start = end + 1
     return all_logs
 
 
-def _extract_borrower_addresses(borrow_logs, liquidation_events):
-    """Extract unique borrower addresses from borrow logs and liquidation events."""
+def _extract_borrowers(borrow_logs, liquidation_events):
+    """Extract unique (protocol, pool, borrower) triples."""
     borrowers = set()
 
     # From borrow events: topic2 is onBehalfOf (the actual borrower)
@@ -301,12 +331,17 @@ def _extract_borrower_addresses(borrow_logs, liquidation_events):
         topics = log.get('topics', [])
         if len(topics) >= 3:
             addr = _topic_to_address(topics[2])
-            borrowers.add(addr.lower())
+            protocol = log.get('_protocol', 'AAVE V3')
+            pool = log.get('_pool', PROTOCOL_POOLS.get(protocol, AAVE_V3_POOL))
+            borrowers.add((protocol, pool, addr.lower()))
 
     # From liquidation events: the users that were liquidated
     for evt in liquidation_events:
         if evt and evt.get('user_full'):
-            borrowers.add(evt['user_full'].lower())
+            protocol = evt.get('protocol')
+            pool = PROTOCOL_POOLS.get(protocol)
+            if pool:
+                borrowers.add((protocol, pool, evt['user_full'].lower()))
 
     # Limit to MAX_BORROWERS
     return list(borrowers)[:MAX_BORROWERS]
@@ -314,7 +349,7 @@ def _extract_borrower_addresses(borrow_logs, liquidation_events):
 
 # ─── Multicall for health factors ───
 
-def _encode_multicall_health_factors(addresses):
+def _encode_multicall_health_factors(addresses, target_pool):
     """Encode a multicall3 aggregate3 call for getUserAccountData on each address.
 
     aggregate3 signature: aggregate3((address target, bool allowFailure, bytes callData)[])
@@ -331,7 +366,7 @@ def _encode_multicall_health_factors(addresses):
     for addr in addresses:
         calldata = GET_USER_ACCOUNT_DATA_SELECTOR.replace('0x', '') + _pad_address(addr)
         calls.append({
-            'target': AAVE_V3_POOL,
+            'target': target_pool,
             'allowFailure': True,
             'callData': calldata,
         })
@@ -462,8 +497,8 @@ def _decode_multicall_results(hex_data, num_calls):
     return results
 
 
-def _batch_health_factors(addresses):
-    """Query health factors for a list of addresses using multicall."""
+def _batch_health_factors(pool_address, addresses):
+    """Query health factors for a list of addresses against a specific pool."""
     if not addresses:
         return []
 
@@ -473,7 +508,7 @@ def _batch_health_factors(addresses):
 
     for i in range(0, len(addresses), batch_size):
         batch = addresses[i:i + batch_size]
-        calldata = _encode_multicall_health_factors(batch)
+        calldata = _encode_multicall_health_factors(batch, pool_address)
         if not calldata:
             all_results.extend([(False, 0, 0, 0)] * len(batch))
             continue
@@ -555,22 +590,34 @@ def _do_update():
     # 3) Near-liquidation positions
     # Fetch borrow events to find active borrowers
     borrow_logs = _fetch_borrow_logs(current_block)
-    borrower_addresses = _extract_borrower_addresses(borrow_logs, liquidation_events)
+    borrower_entries = _extract_borrowers(borrow_logs, liquidation_events)
 
     near_liquidation = []
-    if borrower_addresses:
-        health_results = _batch_health_factors(borrower_addresses)
-        for addr, (success, hf, collateral, debt) in zip(borrower_addresses, health_results):
-            if success and 0 < hf < HEALTH_FACTOR_THRESHOLD and debt > 0:
-                near_liquidation.append({
-                    'protocol': 'AAVE V3',
-                    'user': _shorten_address(addr),
-                    'user_full': addr,
-                    'health_factor': f"{hf:.4f}",
-                    'health_factor_num': hf,
-                    'collateral_usd': _format_usd(collateral),
-                    'debt_usd': _format_usd(debt),
-                })
+    if borrower_entries:
+        grouped = {}
+        for protocol, pool, addr in borrower_entries:
+            grouped.setdefault((protocol, pool), []).append(addr)
+
+        for (protocol, pool), addresses in grouped.items():
+            health_results = _batch_health_factors(pool, addresses)
+            for addr, (success, hf, collateral, debt) in zip(addresses, health_results):
+                if success and 0 < hf < HEALTH_FACTOR_THRESHOLD and debt > 0:
+                    if protocol == 'Radiant':
+                        collateral_usd = _format_eth_base_value_as_usd(collateral)
+                        debt_usd = _format_eth_base_value_as_usd(debt)
+                    else:
+                        collateral_usd = _format_usd(collateral)
+                        debt_usd = _format_usd(debt)
+
+                    near_liquidation.append({
+                        'protocol': protocol,
+                        'user': _shorten_address(addr),
+                        'user_full': addr,
+                        'health_factor': f"{hf:.4f}",
+                        'health_factor_num': hf,
+                        'collateral_usd': collateral_usd,
+                        'debt_usd': debt_usd,
+                    })
 
     # Sort by health factor ascending (closest to liquidation first)
     near_liquidation.sort(key=lambda x: x['health_factor_num'])

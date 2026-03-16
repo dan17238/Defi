@@ -19,7 +19,7 @@ use alloy::signers::local::PrivateKeySigner;
 use eyre::{Context, Result};
 use futures::StreamExt;
 use tokio::signal;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use crate::arbitrage::ArbitrageMonitor;
@@ -135,13 +135,6 @@ async fn main() -> Result<()> {
     // Shared latest block number, updated by the main loop, read by protocol monitors.
     let latest_block = Arc::new(AtomicU64::new(block_number));
 
-    // Parse contract addresses
-    let flash_liquidator_address: Address = config
-        .contracts
-        .flash_liquidator
-        .parse()
-        .wrap_err("Invalid flash_liquidator address")?;
-
     // Initialize metrics
     let metrics = Metrics::new();
 
@@ -150,22 +143,40 @@ async fn main() -> Result<()> {
     // cache, which causes nonce conflicts when both submit concurrently.
     let shared_exec = Arc::new(exec_provider);
 
-    // Initialize the liquidator orchestrator
-    // read_provider is used for simulation; exec_provider for sending transactions.
-    let liquidator = Arc::new(Liquidator::new(
-        read_provider.clone(),
-        shared_exec.clone(),
-        config.execution.clone(),
-        flash_liquidator_address,
-        wallet_address,
-        metrics.clone(),
-    ));
+    // Initialize the liquidator only if at least one liquidation protocol is enabled.
+    // This keeps "pure arbitrage mode" from requiring a flash_liquidator deployment.
+    let liquidation_enabled = config.protocols.any_enabled();
+    let liquidator = if liquidation_enabled {
+        let flash_liquidator_address: Address = config
+            .contracts
+            .flash_liquidator
+            .parse()
+            .wrap_err("Invalid flash_liquidator address")?;
+
+        Some(Arc::new(Liquidator::new(
+            read_provider.clone(),
+            shared_exec.clone(),
+            config.execution.clone(),
+            flash_liquidator_address,
+            wallet_address,
+            metrics.clone(),
+        )))
+    } else {
+        None
+    };
 
     // Shutdown signal channel
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
-    // Notify used by sequencer feed to trigger protocol rescans
-    let rescan_notify = Arc::new(Notify::new());
+    // Sequencer feed fanout for liquidation monitors + arbitrage monitor.
+    let (feed_tx, _) = tokio::sync::broadcast::channel::<SequencerEvent>(1024);
+    {
+        let feed_url = config.sequencer.feed_url.clone();
+        let feed_tx = feed_tx.clone();
+        tokio::spawn(async move {
+            sequencer_feed::run_sequencer_feed(feed_url, feed_tx).await;
+        });
+    }
 
     // Spawn protocol monitors
     let mut protocol_handles = Vec::new();
@@ -190,11 +201,14 @@ async fn main() -> Result<()> {
                 config.execution.multicall_batch_size,
             );
 
-            let liquidator = liquidator.clone();
+            let liquidator = liquidator
+                .as_ref()
+                .expect("liquidator must exist when a liquidation protocol is enabled")
+                .clone();
             let metrics = metrics.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
+            let mut feed_rx = feed_tx.subscribe();
             let latest_block = latest_block.clone();
-            let rescan_notify = rescan_notify.clone();
 
             let handle = tokio::spawn(async move {
                 info!("AAVE v3 monitor started");
@@ -203,8 +217,8 @@ async fn main() -> Result<()> {
                     liquidator,
                     metrics,
                     &mut shutdown_rx,
+                    &mut feed_rx,
                     latest_block,
-                    rescan_notify,
                 )
                 .await;
                 info!("AAVE v3 monitor stopped");
@@ -233,11 +247,14 @@ async fn main() -> Result<()> {
                 config.execution.multicall_batch_size,
             );
 
-            let liquidator = liquidator.clone();
+            let liquidator = liquidator
+                .as_ref()
+                .expect("liquidator must exist when a liquidation protocol is enabled")
+                .clone();
             let metrics = metrics.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
+            let mut feed_rx = feed_tx.subscribe();
             let latest_block = latest_block.clone();
-            let rescan_notify = rescan_notify.clone();
 
             let handle = tokio::spawn(async move {
                 info!("Radiant monitor started");
@@ -246,8 +263,8 @@ async fn main() -> Result<()> {
                     liquidator,
                     metrics,
                     &mut shutdown_rx,
+                    &mut feed_rx,
                     latest_block,
-                    rescan_notify,
                 )
                 .await;
                 info!("Radiant monitor stopped");
@@ -275,11 +292,14 @@ async fn main() -> Result<()> {
                 silo_config.min_profit_usd,
             );
 
-            let liquidator = liquidator.clone();
+            let liquidator = liquidator
+                .as_ref()
+                .expect("liquidator must exist when a liquidation protocol is enabled")
+                .clone();
             let metrics = metrics.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
+            let mut feed_rx = feed_tx.subscribe();
             let latest_block = latest_block.clone();
-            let rescan_notify = rescan_notify.clone();
 
             let handle = tokio::spawn(async move {
                 info!("Silo monitor started");
@@ -288,8 +308,8 @@ async fn main() -> Result<()> {
                     liquidator,
                     metrics,
                     &mut shutdown_rx,
+                    &mut feed_rx,
                     latest_block,
-                    rescan_notify,
                 )
                 .await;
                 info!("Silo monitor stopped");
@@ -310,17 +330,6 @@ async fn main() -> Result<()> {
             if let Err(e) = web::start_dashboard(metrics, arb_dashboard, port).await {
                 error!(error = %e, "Dashboard server failed");
             }
-        });
-    }
-
-    // --- Sequencer Feed (broadcast channel: arb monitor + main loop each subscribe) ---
-    let (feed_tx, _) = tokio::sync::broadcast::channel::<SequencerEvent>(1024);
-    let mut feed_rx = feed_tx.subscribe();
-    {
-        let feed_url = config.sequencer.feed_url.clone();
-        let feed_tx = feed_tx.clone();
-        tokio::spawn(async move {
-            sequencer_feed::run_sequencer_feed(feed_url, feed_tx).await;
         });
     }
 
@@ -408,11 +417,6 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            // Sequencer feed event - fastest signal for new transactions
-            Ok(event) = feed_rx.recv() => {
-                let _ = event;
-                rescan_notify.notify_waiters();
-            }
             // Periodic metrics logging
             _ = metrics_interval.tick() => {
                 metrics.log_summary();
@@ -448,11 +452,11 @@ async fn run_protocol_monitor<Proto, R, E>(
     liquidator: Arc<Liquidator<R, E>>,
     metrics: Metrics,
     shutdown_rx: &mut broadcast::Receiver<()>,
+    feed_rx: &mut broadcast::Receiver<SequencerEvent>,
     latest_block: Arc<AtomicU64>,
-    rescan_notify: Arc<Notify>,
 ) where
-    Proto: Protocol,
-    R: Provider + Clone + Send + Sync,
+    Proto: Protocol + Send + Sync + 'static,
+    R: Provider + Clone + Send + Sync + 'static,
     E: Provider + Clone + Send + Sync + 'static,
 {
     // Run initial borrower discovery before entering the scan loop (Fix 6).
@@ -515,7 +519,22 @@ async fn run_protocol_monitor<Proto, R, E>(
                 }
             }
             // Sequencer feed triggered a rescan
-            _ = rescan_notify.notified() => {
+            result = feed_rx.recv() => {
+                match result {
+                    Ok(_event) => {}
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(
+                            protocol = protocol.name(),
+                            skipped = n,
+                            "Protocol monitor lagged behind sequencer feed"
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        info!(protocol = protocol.name(), "Sequencer feed closed");
+                        break;
+                    }
+                }
+
                 let block_number = latest_block.load(Ordering::Acquire);
 
                 match protocol.get_liquidatable_positions(block_number).await {

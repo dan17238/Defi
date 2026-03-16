@@ -117,8 +117,10 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                 tokio::time::timeout(Duration::from_secs(45), pending.get_receipt()).await;
             match receipt_result {
                 Ok(Ok(receipt)) if receipt.status() => {
-                    let gas_cost_usd =
-                        Self::gas_cost_usd(receipt.gas_used(), receipt.effective_gas_price());
+                    let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(
+                        receipt.gas_used(),
+                        receipt.effective_gas_price(),
+                    );
                     let gross_profit_usd = Self::extract_realized_profit(&receipt);
                     if gross_profit_usd.is_none() {
                         warn!(
@@ -188,22 +190,6 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
         let debt_asset = Address::from_slice(&data[44..64]);
         let profit_tokens = U256::from_be_slice(&data[128..160]);
         Some((debt_asset, profit_tokens))
-    }
-
-    fn eth_price_usd() -> f64 {
-        let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-            .load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 100.0;
-        if eth_price > 100.0 {
-            eth_price
-        } else {
-            3500.0
-        }
-    }
-
-    fn gas_cost_usd(gas_used: u64, gas_price_wei: u128) -> f64 {
-        let gas_cost_eth = gas_used as f64 * gas_price_wei as f64 / 1e18;
-        gas_cost_eth * Self::eth_price_usd()
     }
 
     /// Estimate gas for a liquidation call without sending it.

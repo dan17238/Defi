@@ -43,24 +43,19 @@ pub struct SequencerEvent {
 /// We only need `to` (20 bytes address), so we do minimal RLP parsing.
 fn parse_tx_to(msg: &serde_json::Value) -> Option<Address> {
     // Navigate: message.message.l2Msg
-    let l2msg_b64 = msg
-        .get("message")?
-        .get("l2Msg")?
-        .as_str()?;
+    let l2msg_b64 = msg.get("message")?.get("l2Msg")?.as_str()?;
 
     // Check header kind = 3 (L2MessageKind_SignedTx)
-    let kind = msg
-        .get("message")?
-        .get("header")?
-        .get("kind")?
-        .as_u64()?;
+    let kind = msg.get("message")?.get("header")?.get("kind")?.as_u64()?;
     if kind != 3 {
         return None;
     }
 
     // Decode base64
     use base64::Engine;
-    let raw = base64::engine::general_purpose::STANDARD.decode(l2msg_b64).ok()?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(l2msg_b64)
+        .ok()?;
     if raw.is_empty() {
         return None;
     }
@@ -261,7 +256,8 @@ pub async fn run_sequencer_feed(feed_url: String, tx: broadcast::Sender<Sequence
                                             };
                                             trace!(
                                                 messages = msg_count,
-                                                rate = format!("{:.1}/s", msg_count as f64 / elapsed),
+                                                rate =
+                                                    format!("{:.1}/s", msg_count as f64 / elapsed),
                                                 decode_pct = format!("{:.0}%", decode_rate),
                                                 "Sequencer Feed throughput"
                                             );

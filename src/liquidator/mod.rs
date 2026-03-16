@@ -6,7 +6,7 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use dashmap::DashSet;
 use eyre::Result;
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -16,6 +16,8 @@ use crate::utils::metrics::Metrics;
 
 use self::executor::Executor;
 use self::simulator::Simulator;
+
+const MAX_CONCURRENT_LIQUIDATION_SIMULATIONS: usize = 3;
 
 /// Liquidation orchestrator.
 ///
@@ -242,25 +244,28 @@ where
 
         let total = opportunities.len();
 
-        // Process all opportunities concurrently instead of sequentially.
-        // Each opportunity is independent (different borrower positions), so
-        // there is no ordering dependency between them.
-        let futures: Vec<_> = opportunities
-            .iter()
-            .map(|opp| self.process_opportunity(opp))
-            .collect();
-
-        let results = join_all(futures).await;
+        // Simulate a few opportunities in parallel, but cap concurrency so a
+        // large batch does not starve the node or slow the best candidates.
+        let results = stream::iter(opportunities.into_iter().enumerate())
+            .map(|(_i, opp)| async move {
+                let protocol = opp.protocol.clone();
+                let user = opp.user;
+                let result = self.process_opportunity(&opp).await;
+                (protocol, user, result)
+            })
+            .buffer_unordered(MAX_CONCURRENT_LIQUIDATION_SIMULATIONS)
+            .collect::<Vec<_>>()
+            .await;
 
         let mut executed = 0usize;
-        for (i, result) in results.into_iter().enumerate() {
+        for (protocol, user, result) in results {
             match result {
                 Ok(true) => executed += 1,
                 Ok(false) => {}
                 Err(e) => {
                     error!(
-                        protocol = %opportunities[i].protocol,
-                        user = %opportunities[i].user,
+                        protocol = %protocol,
+                        user = %user,
                         error = %e,
                         "Error processing opportunity"
                     );

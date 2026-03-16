@@ -1,2 +1,3 @@
+pub mod gas;
 pub mod metrics;
 pub mod multicall;
