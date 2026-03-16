@@ -57,6 +57,11 @@ impl PoolStateCache {
         self.states.get(addr).map(|v| v.clone())
     }
 
+    /// Check if an address is one of our monitored pools.
+    pub fn contains(&self, addr: &Address) -> bool {
+        self.states.contains_key(addr)
+    }
+
     /// Initialize pool states by reading static fields (token0, token1, fee)
     /// and current slot0 + liquidity via Multicall.
     pub async fn initialize<P: Provider + Send + Sync>(&self, provider: &P) -> Result<()> {

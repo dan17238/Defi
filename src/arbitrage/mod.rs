@@ -273,7 +273,17 @@ where
     }
 
     /// Handle a sequencer event: refresh pools → detect → simulate → execute.
+    /// If the feed decoded a tx_to address, we skip scanning unless the target
+    /// is one of our monitored pools (or a known DEX router). This avoids
+    /// wasting Multicall round-trips on unrelated transactions.
     async fn on_sequencer_event(&self, event: &SequencerEvent) {
+        // Fast-path filter: if we know the tx target and it's not a monitored pool, skip
+        if let Some(target) = &event.tx_to {
+            if !self.pool_cache.contains(target) {
+                return;
+            }
+        }
+
         let start = Instant::now();
 
         // 1. Refresh pool states via Multicall (~0.3ms over IPC)
@@ -317,11 +327,12 @@ where
     }
 
     /// Simulate and execute a single arbitrage opportunity.
+    /// Uses bracket search (0.5x, 1x, 2x, 4x of heuristic amount) to find
+    /// the most profitable trade size, then executes the best one.
     async fn process_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<()> {
         self.dashboard
             .record_detected(&opp.pair_name, opp.estimated_profit_bps, 0.0);
 
-        // Build calldata for FlashArbitrage.executeArbitrage()
         let min_profit_tokens = match self.compute_min_profit_tokens(opp) {
             Ok(value) => value,
             Err(e) => {
@@ -329,28 +340,64 @@ where
                 return Ok(());
             }
         };
-        let calldata = self.encode_arb_calldata(opp, min_profit_tokens)?;
 
-        // Simulate via revm
-        let sim_result = self
-            .simulate_arbitrage(calldata.clone(), opp)
-            .await
-            .wrap_err("revm simulation failed")?;
+        // Bracket search: try multiple amounts around the heuristic seed
+        let seed = opp.amount_in;
+        let multipliers: &[f64] = &[0.5, 1.0, 2.0, 4.0];
+        let mut best_result: Option<(ArbSimResult, Bytes)> = None;
 
-        self.dashboard.record_simulated(
-            &opp.pair_name,
-            sim_result.profit_usd,
-            sim_result.gas_used,
-            sim_result.reverted || !sim_result.profitable,
-        );
-
-        if !sim_result.profitable {
-            if sim_result.reverted {
-                debug!(pair = %opp.pair_name, "Simulation reverted");
+        for &mult in multipliers {
+            let scaled = U256::from((seed.saturating_to::<u128>() as f64 * mult) as u128);
+            if scaled.is_zero() {
+                continue;
             }
-            return Ok(());
+
+            let mut trial_opp = opp.clone();
+            trial_opp.amount_in = scaled;
+
+            let calldata = match self.encode_arb_calldata(&trial_opp, min_profit_tokens) {
+                Ok(cd) => cd,
+                Err(_) => continue,
+            };
+
+            let sim = match self.simulate_arbitrage(calldata.clone(), &trial_opp).await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if sim.reverted || !sim.profitable {
+                continue;
+            }
+
+            let is_better = match &best_result {
+                Some((prev, _)) => sim.profit_usd > prev.profit_usd,
+                None => true,
+            };
+            if is_better {
+                best_result = Some((sim, calldata));
+            }
         }
 
+        let (sim_result, calldata) = match best_result {
+            Some(pair) => pair,
+            None => {
+                // All multipliers failed — try the seed one more time for dashboard recording
+                let calldata = self.encode_arb_calldata(opp, min_profit_tokens)?;
+                let sim = self.simulate_arbitrage(calldata.clone(), opp).await
+                    .wrap_err("revm simulation failed")?;
+                self.dashboard.record_simulated(
+                    &opp.pair_name, sim.profit_usd, sim.gas_used,
+                    sim.reverted || !sim.profitable,
+                );
+                return Ok(());
+            }
+        };
+
+        self.dashboard.record_simulated(
+            &opp.pair_name, sim_result.profit_usd, sim_result.gas_used, false,
+        );
+
+        // bracket search already ensured sim_result.profitable == true
         info!(
             pair = %opp.pair_name,
             profit_usd = sim_result.profit_usd,

@@ -152,6 +152,54 @@ token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
 fee_a = 100
 fee_b = 500
 
+# === Cross-DEX pairs (UniV3 <> SushiSwap V3, same interface) ===
+# Same fee tier, same token pair, different DEX → pure price divergence arb
+
+[[arbitrage.pairs]]
+name = "WETH/USDC 0.05% Uni<>Sushi"
+pool_a = "0xC6962004f452bE9203591991D15f6b388e09E8D0"
+pool_b = "0xf3eb87c1f6020982173c908e7eb31aa66c1f0296"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+fee_a = 500
+fee_b = 500
+
+[[arbitrage.pairs]]
+name = "WETH/USDT 0.05% Uni<>Sushi"
+pool_a = "0x641c00a822e8b671738d32a431a4fb6074e5c79d"
+pool_b = "0x96ada81328abce21939a51d971a63077e16db26e"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+fee_a = 500
+fee_b = 500
+
+[[arbitrage.pairs]]
+name = "WETH/USDT 0.3% Uni<>Sushi"
+pool_a = "0xc82819f72a9e77e2c0c3a69b3196478f44303cf4"
+pool_b = "0x92d543a8a158a6bc2c7018ae17803819cb9150b2"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+fee_a = 3000
+fee_b = 3000
+
+[[arbitrage.pairs]]
+name = "WETH/ARB 0.05% Uni<>Sushi"
+pool_a = "0xc6f780497a95e246eb9449f5e4770916dcd6396a"
+pool_b = "0x99543bf98ca1830aa20d3eb12c1b9962f8eadc11"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0x912CE59144191C1204E64559FE8253a0e49E6548"
+fee_a = 500
+fee_b = 500
+
+[[arbitrage.pairs]]
+name = "WETH/ARB 0.3% Uni<>Sushi"
+pool_a = "0x92c63d0e701caae670c9415d91c474f686298f00"
+pool_b = "0xb3942c9ffa04efbc1fa746e146be7565c76e3dc1"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0x912CE59144191C1204E64559FE8253a0e49E6548"
+fee_a = 3000
+fee_b = 3000
+
 # === Multi-hop routes (triangular arbitrage) ===
 
 # WETH → USDC(0.05%) → USDC.e(0.01%) → WETH(USDC.e/WETH 0.3%)
