@@ -6,6 +6,9 @@ use alloy::providers::{Provider, ProviderBuilder, RootProvider, WsConnect};
 use eyre::{Context, Result};
 use tracing::info;
 
+#[cfg(unix)]
+use alloy::providers::IpcConnect;
+
 /// Concrete type for a signed HTTP provider (with wallet filler).
 /// This is the type returned by `ProviderBuilder::new().wallet(w).connect_http(url)`.
 pub type SignedHttpProvider = FillProvider<
@@ -61,6 +64,42 @@ pub fn create_signed_http_provider(
         .wallet(wallet)
         .connect_http(url);
     Ok(provider)
+}
+
+/// Create an IPC provider for lowest-latency local node access (<0.3ms).
+///
+/// Falls back to HTTP if IPC connection fails.
+#[cfg(unix)]
+pub async fn create_ipc_provider(ipc_path: &str) -> Result<RootProvider> {
+    info!(path = ipc_path, "Connecting to IPC");
+    let ipc_connect: IpcConnect<std::path::PathBuf> = IpcConnect::new(ipc_path.into());
+    let provider = ProviderBuilder::default()
+        .connect_ipc(ipc_connect)
+        .await
+        .wrap_err_with(|| format!("Failed to connect IPC at {}", ipc_path))?;
+    let chain_id = provider.get_chain_id().await.wrap_err("Failed to fetch chain ID via IPC")?;
+    info!(chain_id, "IPC provider connected");
+    Ok(provider)
+}
+
+/// Create the best available read provider: IPC > HTTP.
+pub async fn create_best_read_provider(
+    http_url: &str,
+    ipc_path: Option<&str>,
+) -> Result<RootProvider> {
+    #[cfg(unix)]
+    if let Some(path) = ipc_path {
+        match create_ipc_provider(path).await {
+            Ok(provider) => {
+                info!("Using IPC provider for reads (fastest)");
+                return Ok(provider);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "IPC not available, falling back to HTTP");
+            }
+        }
+    }
+    create_http_provider(http_url)
 }
 
 /// Fetch the latest block number from the provider.

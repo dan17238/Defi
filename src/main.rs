@@ -116,9 +116,12 @@ async fn main() -> Result<()> {
     info!(wallet = %wallet_address, "Wallet loaded");
 
     // --- Providers ---
-    // Read-only provider for monitoring (unsigned, fast RPC)
+    // Read-only provider: IPC (fastest) > HTTP (fallback)
     let ws_provider = provider::create_ws_provider(&config.rpc.ws_url).await?;
-    let read_provider = provider::create_http_provider(&config.rpc.http_url)?;
+    let read_provider = provider::create_best_read_provider(
+        &config.rpc.http_url,
+        config.rpc.ipc_path.as_deref(),
+    ).await?;
 
     // Execution provider (signed with wallet, points to sequencer for lowest latency)
     let exec_provider = provider::create_signed_http_provider(

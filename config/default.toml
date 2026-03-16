@@ -2,9 +2,11 @@
 # Use remote RPC during development, switch to local after node sync
 http_url = "https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
 ws_url = "wss://arb-mainnet.g.alchemy.com/v2/YOUR_KEY"
-# Local node (after sync)
+# Local node (after sync) — uncomment these:
 # http_url = "http://127.0.0.1:8547"
 # ws_url = "ws://127.0.0.1:8548"
+# IPC (fastest, <0.3ms) — uncomment after node sync:
+# ipc_path = "/data/arbitrum/arb1/nitro/ipc"
 
 [wallet]
 private_key_env = "LIQUIDATOR_PRIVATE_KEY"

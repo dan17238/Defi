@@ -18,6 +18,10 @@ pub struct AppConfig {
 pub struct RpcConfig {
     pub http_url: String,
     pub ws_url: String,
+    /// Optional IPC path for local node (fastest, <0.3ms).
+    /// If set, used instead of http_url for reads.
+    #[serde(default)]
+    pub ipc_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
