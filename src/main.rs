@@ -287,12 +287,16 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Shared arb dashboard state
+    let arb_dashboard = crate::arbitrage::dashboard::ArbDashboard::new();
+
     // --- Dashboard web server ---
     {
         let metrics = metrics.clone();
+        let arb_dashboard = arb_dashboard.clone();
         let port = config.monitoring.dashboard_port;
         tokio::spawn(async move {
-            if let Err(e) = web::start_dashboard(metrics, port).await {
+            if let Err(e) = web::start_dashboard(metrics, arb_dashboard, port).await {
                 error!(error = %e, "Dashboard server failed");
             }
         });
@@ -335,6 +339,7 @@ async fn main() -> Result<()> {
                 wallet_address,
                 flash_arb_address,
                 metrics.clone(),
+                arb_dashboard.clone(),
             )
             .await
             .wrap_err("Failed to initialize ArbitrageMonitor")?;
@@ -353,19 +358,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    // --- Main block subscription loop ---
-    info!("Subscribing to new blocks via WebSocket");
-    let sub = ws_provider
-        .subscribe_blocks()
-        .await
-        .wrap_err("Failed to subscribe to new blocks")?;
-
-    let block_stream = sub.into_stream();
-    // Pin the stream for use in tokio::select!
-    let mut block_stream = std::pin::pin!(block_stream);
+    // --- Main event loop with block subscription reconnect ---
     let mut metrics_interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    let ws_url = config.rpc.ws_url.clone();
 
     info!("Entering main event loop");
+
+    // Subscribe to blocks (reconnects on stream end)
+    let mut block_stream = {
+        let sub = ws_provider
+            .subscribe_blocks()
+            .await
+            .wrap_err("Failed to subscribe to new blocks")?;
+        Box::pin(sub.into_stream())
+    };
 
     loop {
         tokio::select! {
@@ -374,25 +380,37 @@ async fn main() -> Result<()> {
                 match block_opt {
                     Some(block) => {
                         let block_num = block.inner.number;
-                        info!(block = block_num, "New block received");
-                        // Update shared latest block number for protocol monitors
                         latest_block.store(block_num, Ordering::Release);
                         metrics.record_block_processed();
                     }
                     None => {
-                        error!("Block subscription stream ended unexpectedly, shutting down");
-                        let _ = shutdown_tx.send(());
-                        break;
+                        // Stream ended — reconnect instead of shutting down
+                        warn!("Block subscription stream ended, reconnecting...");
+                        match provider::create_ws_provider(&ws_url).await {
+                            Ok(new_ws) => {
+                                match new_ws.subscribe_blocks().await {
+                                    Ok(sub) => {
+                                        block_stream = Box::pin(sub.into_stream());
+                                        info!("Block subscription reconnected");
+                                    }
+                                    Err(e) => {
+                                        error!(error = %e, "Failed to resubscribe to blocks");
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!(error = %e, "Failed to reconnect WS provider");
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            }
+                        }
                     }
                 }
             }
             // Sequencer feed event - fastest signal for new transactions
             Ok(event) = feed_rx.recv() => {
-                // Sequencer feed event received - a new transaction was sequenced.
-                // Notify protocol monitors to trigger an immediate rescan.
                 let _ = event;
                 rescan_notify.notify_waiters();
-                metrics.record_block_processed();
             }
             // Periodic metrics logging
             _ = metrics_interval.tick() => {
@@ -462,13 +480,13 @@ async fn run_protocol_monitor<Proto, R, E>(
 
                 match protocol.get_liquidatable_positions(block_number).await {
                     Ok(opportunities) => {
-                        let count = opportunities.len();
-                        metrics.record_positions_scanned(count as u64);
+                        // Record that a scan happened (1 per scan, not per opportunity)
+                        metrics.record_positions_scanned(1);
 
                         if !opportunities.is_empty() {
                             info!(
                                 protocol = protocol.name(),
-                                count,
+                                count = opportunities.len(),
                                 "Found liquidation opportunities"
                             );
 
@@ -492,19 +510,18 @@ async fn run_protocol_monitor<Proto, R, E>(
                     }
                 }
             }
-            // Sequencer feed triggered a rescan (Fix 7)
+            // Sequencer feed triggered a rescan
             _ = rescan_notify.notified() => {
                 let block_number = latest_block.load(Ordering::Acquire);
 
                 match protocol.get_liquidatable_positions(block_number).await {
                     Ok(opportunities) => {
-                        let count = opportunities.len();
-                        metrics.record_positions_scanned(count as u64);
+                        metrics.record_positions_scanned(1);
 
                         if !opportunities.is_empty() {
                             info!(
                                 protocol = protocol.name(),
-                                count,
+                                count = opportunities.len(),
                                 "Found liquidation opportunities (sequencer trigger)"
                             );
 

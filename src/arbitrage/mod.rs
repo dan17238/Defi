@@ -1,9 +1,11 @@
+pub mod dashboard;
 pub mod detector;
 pub mod pairs;
 pub mod pool_state;
 
 use std::time::Instant;
 
+use alloy::network::ReceiptResponse;
 use alloy::primitives::{Address, Bytes, FixedBytes, I256, TxKind, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::{TransactionInput, TransactionRequest};
@@ -22,6 +24,7 @@ use crate::config::ArbitrageConfig;
 use crate::sequencer_feed::SequencerEvent;
 use crate::utils::metrics::Metrics;
 
+use self::dashboard::{ArbDashboard, ArbPairSnapshot};
 use self::detector::{ArbitrageDetector, ArbitrageOpportunity};
 use self::pairs::PoolPair;
 use self::pool_state::PoolStateCache;
@@ -69,12 +72,13 @@ pub struct ArbitrageMonitor<R, E> {
     metrics: Metrics,
     wallet_address: Address,
     flash_arb_contract: Address,
+    dashboard: ArbDashboard,
 }
 
 impl<R, E> ArbitrageMonitor<R, E>
 where
-    R: Provider + Clone + Send + Sync,
-    E: Provider + Clone + Send + Sync,
+    R: Provider + Clone + Send + Sync + 'static,
+    E: Provider + Clone + Send + Sync + 'static,
 {
     /// Create and initialize a new ArbitrageMonitor.
     pub async fn new(
@@ -84,6 +88,7 @@ where
         wallet_address: Address,
         flash_arb_contract: Address,
         metrics: Metrics,
+        dashboard: ArbDashboard,
     ) -> Result<Self> {
         let pairs = pairs::parse_pairs(&config.pairs)?;
 
@@ -103,8 +108,8 @@ where
             .await
             .wrap_err("Failed to initialize pool state cache")?;
 
-        // Validate that both pools in each pair share the same token0/token1.
-        // FlashArbitrage assumes identical token pairs; mismatched tokens will revert.
+        // Validate pair metadata against on-chain pool state up front so we fail
+        // closed on stale config instead of discovering it only after simulation.
         for pair in &pairs {
             let state_a = pool_cache.get(&pair.pool_a).ok_or_else(|| {
                 eyre::eyre!("Pair '{}': failed to read pool_a {} state", pair.name, pair.pool_a)
@@ -112,10 +117,25 @@ where
             let state_b = pool_cache.get(&pair.pool_b).ok_or_else(|| {
                 eyre::eyre!("Pair '{}': failed to read pool_b {} state", pair.name, pair.pool_b)
             })?;
+            if pair.pool_a == pair.pool_b {
+                eyre::bail!("Pair '{}': pool_a and pool_b must be different pools", pair.name);
+            }
             if state_a.token0 != state_b.token0 || state_a.token1 != state_b.token1 {
                 eyre::bail!(
                     "Pair '{}': pools have different tokens! pool_a=({},{}) pool_b=({},{})",
                     pair.name, state_a.token0, state_a.token1, state_b.token0, state_b.token1
+                );
+            }
+            if state_a.token0 != pair.token0 || state_a.token1 != pair.token1 {
+                eyre::bail!(
+                    "Pair '{}': configured tokens ({},{}) do not match on-chain pool_a ({},{})",
+                    pair.name, pair.token0, pair.token1, state_a.token0, state_a.token1
+                );
+            }
+            if state_a.fee != pair.fee_a || state_b.fee != pair.fee_b {
+                eyre::bail!(
+                    "Pair '{}': configured fees ({},{}) do not match on-chain fees ({},{})",
+                    pair.name, pair.fee_a, pair.fee_b, state_a.fee, state_b.fee
                 );
             }
         }
@@ -138,6 +158,7 @@ where
             metrics,
             wallet_address,
             flash_arb_contract,
+            dashboard,
         })
     }
 
@@ -182,6 +203,8 @@ where
         }
 
         // 2. Detect arbitrage opportunities (<0.1ms)
+        self.dashboard.record_scan();
+        self.push_pair_snapshots();
         let opportunities = self.detector.scan_all_pairs(&self.pool_cache);
         if opportunities.is_empty() {
             return;
@@ -215,8 +238,16 @@ where
 
     /// Simulate and execute a single arbitrage opportunity.
     async fn process_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<()> {
+        self.dashboard.record_detected(&opp.pair_name, opp.estimated_profit_bps, 0.0);
+
         // Build calldata for FlashArbitrage.executeArbitrage()
-        let min_profit_tokens = self.compute_min_profit_tokens(opp);
+        let min_profit_tokens = match self.compute_min_profit_tokens(opp) {
+            Ok(value) => value,
+            Err(e) => {
+                warn!(pair = %opp.pair_name, error = %e, "Skipping arb with unsupported profit token");
+                return Ok(());
+            }
+        };
         let calldata = self.encode_arb_calldata(opp, min_profit_tokens);
 
         // Simulate via revm
@@ -224,6 +255,13 @@ where
             .simulate_arbitrage(calldata.clone(), opp)
             .await
             .wrap_err("revm simulation failed")?;
+
+        self.dashboard.record_simulated(
+            &opp.pair_name,
+            sim_result.profit_usd,
+            sim_result.gas_used,
+            sim_result.reverted || !sim_result.profitable,
+        );
 
         if !sim_result.profitable {
             if sim_result.reverted {
@@ -253,15 +291,18 @@ where
         }
 
         // Execute on-chain
-        match self.send_arb_tx(calldata, gas_price_gwei).await {
+        match self
+            .send_arb_tx(calldata, gas_price_gwei, opp.pair_name.clone(), sim_result.profit_usd)
+            .await
+        {
             Ok(tx_hash) => {
+                self.metrics.record_arbitrage_attempt();
                 info!(
                     pair = %opp.pair_name,
                     tx = %tx_hash,
                     profit_usd = sim_result.profit_usd,
                     "Arbitrage transaction submitted"
                 );
-                self.metrics.record_arbitrage(sim_result.profit_usd, true);
             }
             Err(e) => {
                 error!(pair = %opp.pair_name, error = %e, "Failed to submit arb tx");
@@ -288,18 +329,15 @@ where
     /// Compute minimum profit in token units from config USD threshold.
     /// The profit token is determined by the arb direction:
     ///   zeroForOne=true on pool_a → profit is in token0.
-    fn compute_min_profit_tokens(&self, opp: &ArbitrageOpportunity) -> U256 {
+    fn compute_min_profit_tokens(&self, opp: &ArbitrageOpportunity) -> Result<U256> {
         let profit_token = if let Some(state) = self.pool_cache.get(&opp.pool_a) {
             if opp.zero_for_one { state.token0 } else { state.token1 }
         } else {
-            return U256::ZERO;
+            eyre::bail!("missing cached state for pool {}", opp.pool_a);
         };
 
-        crate::liquidator::flash_loan::tokens::usd_to_token_units(
-            profit_token,
-            self.config.min_profit_usd,
-        )
-        .unwrap_or(U256::ZERO)
+        crate::liquidator::flash_loan::tokens::usd_to_token_units(profit_token, self.config.min_profit_usd)
+            .ok_or_else(|| eyre::eyre!("unsupported profit token {}", profit_token))
     }
 
     /// Simulate the arbitrage transaction via revm.
@@ -378,42 +416,22 @@ where
             } => {
                 let gas_used = gas.used();
 
-                // Extract profit from ArbitrageExecuted event
-                let mut profit_tokens = U256::ZERO;
+                // Extract realized token profit from ArbitrageExecuted.
+                let mut gross_profit_usd = None;
                 for log in &logs {
                     if log.topics().first() == Some(&ARB_EXECUTED_TOPIC) {
                         let data = log.data.data.as_ref();
-                        // Event data: tokenProfit (address, 32 bytes) + profit (uint256, 32 bytes)
-                        if data.len() >= 64 {
-                            profit_tokens = U256::from_be_slice(&data[32..64]);
+                        if let Some((token_profit, profit_tokens)) = Self::decode_profit_event_data(data) {
+                            gross_profit_usd =
+                                crate::liquidator::flash_loan::tokens::token_value_usd(profit_tokens, token_profit);
                         }
                         break;
                     }
                 }
 
                 // Estimate gas cost in USD
-                let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-                    .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
-                let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
-                let gas_cost_usd = gas_used as f64 * 0.1 / 1e9 * eth_price + 0.03;
-
-                // Rough profit estimate in USD using token pricing
-                let profit_usd = if !profit_tokens.is_zero() {
-                    crate::liquidator::flash_loan::tokens::token_value_usd(
-                        profit_tokens,
-                        // The profit token depends on direction; use a rough estimate
-                        // by trying both tokens of the pair
-                        if let Some(state) = self.pool_cache.get(&opp.pool_a) {
-                            if opp.zero_for_one { state.token0 } else { state.token1 }
-                        } else {
-                            Address::ZERO
-                        },
-                    )
-                    .unwrap_or(0.0)
-                    - gas_cost_usd
-                } else {
-                    -gas_cost_usd
-                };
+                let gas_cost_usd = Self::gas_cost_usd(gas_used, 100_000_000);
+                let profit_usd = gross_profit_usd.unwrap_or(0.0) - gas_cost_usd;
 
                 Ok(ArbSimResult {
                     profitable: profit_usd >= self.config.min_profit_usd,
@@ -446,6 +464,8 @@ where
         &self,
         calldata: Bytes,
         gas_price_gwei: f64,
+        pair_name: String,
+        expected_profit_usd: f64,
     ) -> Result<FixedBytes<32>> {
         let gas_price_wei = (gas_price_gwei * 1e9) as u128;
 
@@ -474,7 +494,136 @@ where
 
         self.metrics.record_latency_us(latency.as_micros() as u64);
 
+        let metrics = self.metrics.clone();
+        let dash = self.dashboard.clone();
+        let tx_str = format!("{tx_hash:#x}");
+        dash.record_submitted(&pair_name, expected_profit_usd, &tx_str, latency.as_millis() as u64);
+
+        tokio::spawn(async move {
+            match pending.get_receipt().await {
+                Ok(receipt) if receipt.status() => {
+                    let gas_cost_usd = Self::gas_cost_usd(receipt.gas_used(), receipt.effective_gas_price());
+                    let gross_profit_usd = Self::extract_realized_profit(&receipt);
+                    if gross_profit_usd.is_none() {
+                        warn!(
+                            pair = %pair_name,
+                            tx = %tx_hash,
+                            "Confirmed arb tx missing ArbitrageExecuted profit data; recording gas-only net profit"
+                        );
+                    }
+                    let net_profit_usd = gross_profit_usd.unwrap_or(0.0) - gas_cost_usd;
+                    metrics.record_arbitrage_success(net_profit_usd);
+                    dash.record_confirmed(&pair_name, net_profit_usd, &tx_str, receipt.gas_used());
+                    info!(
+                        pair = %pair_name, tx = %tx_hash,
+                        gas_used = receipt.gas_used(),
+                        net_profit_usd,
+                        "Arb tx confirmed"
+                    );
+                }
+                Ok(receipt) => {
+                    metrics.record_error();
+                    dash.record_reverted(&pair_name, &tx_str, receipt.gas_used());
+                    warn!(pair = %pair_name, tx = %tx_hash, gas_used = receipt.gas_used(), "Arb tx reverted on-chain");
+                }
+                Err(e) => {
+                    metrics.record_error();
+                    warn!(pair = %pair_name, tx = %tx_hash, error = %e, "Failed to fetch arb receipt");
+                }
+            }
+        });
+
         Ok(tx_hash)
+    }
+
+    /// Extract realized gross profit in USD from ArbitrageExecuted.
+    fn extract_realized_profit(receipt: &alloy::rpc::types::TransactionReceipt) -> Option<f64> {
+        for log in receipt.inner.logs() {
+            if log.topics().first() == Some(&ARB_EXECUTED_TOPIC) {
+                let data = log.data().data.as_ref();
+                if let Some((token_profit, profit_tokens)) = Self::decode_profit_event_data(data) {
+                    return crate::liquidator::flash_loan::tokens::token_value_usd(profit_tokens, token_profit);
+                }
+            }
+        }
+        None
+    }
+
+    /// Decode ArbitrageExecuted non-indexed data.
+    /// ABI layout: tokenProfit (address, 32 bytes) + profit (uint256, 32 bytes)
+    fn decode_profit_event_data(data: &[u8]) -> Option<(Address, U256)> {
+        if data.len() < 64 {
+            return None;
+        }
+        let token_profit = Address::from_slice(&data[12..32]);
+        let profit_tokens = U256::from_be_slice(&data[32..64]);
+        Some((token_profit, profit_tokens))
+    }
+
+    fn eth_price_usd() -> f64 {
+        let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
+            .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+        if eth_price > 100.0 { eth_price } else { 3500.0 }
+    }
+
+    fn gas_cost_usd(gas_used: u64, gas_price_wei: u128) -> f64 {
+        let gas_cost_eth = gas_used as f64 * gas_price_wei as f64 / 1e18;
+        gas_cost_eth * Self::eth_price_usd()
+    }
+
+    fn display_pool_price(sqrt_price_x96: &U256, token0: Address, token1: Address) -> f64 {
+        let (decimals0, _) = match crate::liquidator::flash_loan::tokens::token_info(token0) {
+            Some(info) => info,
+            None => return 0.0,
+        };
+        let (decimals1, _) = match crate::liquidator::flash_loan::tokens::token_info(token1) {
+            Some(info) => info,
+            None => return 0.0,
+        };
+
+        let sqrt = detector::sqrt_price_to_f64(sqrt_price_x96);
+        let two96 = 2.0_f64.powi(96);
+        if sqrt <= 0.0 || two96 <= 0.0 {
+            return 0.0;
+        }
+
+        let raw_price = (sqrt / two96) * (sqrt / two96);
+        raw_price * 10_f64.powi(decimals0 as i32 - decimals1 as i32)
+    }
+
+    /// Push current pool pair snapshots to the dashboard.
+    fn push_pair_snapshots(&self) {
+        let pairs = self.detector.pairs();
+        let mut snapshots = Vec::with_capacity(pairs.len());
+        for pair in pairs {
+            let (price_a, price_b, liq_a, liq_b) =
+                if let (Some(a), Some(b)) = (self.pool_cache.get(&pair.pool_a), self.pool_cache.get(&pair.pool_b)) {
+                    let pa = Self::display_pool_price(&a.sqrt_price_x96, a.token0, a.token1);
+                    let pb = Self::display_pool_price(&b.sqrt_price_x96, b.token0, b.token1);
+                    (pa, pb, a.liquidity, b.liquidity)
+                } else {
+                    continue;
+                };
+
+            let spread = if price_a.max(price_b) > 0.0 {
+                ((price_a - price_b).abs() / price_a.max(price_b)) * 10_000.0
+            } else { 0.0 };
+            let fee_threshold = pair.total_fee_bps() + 5.0;
+
+            snapshots.push(ArbPairSnapshot {
+                name: pair.name.clone(),
+                pool_a: format!("{:#x}", pair.pool_a),
+                pool_b: format!("{:#x}", pair.pool_b),
+                price_a,
+                price_b,
+                spread_bps: spread,
+                fee_threshold_bps: fee_threshold,
+                liquidity_a: format!("{}", liq_a),
+                liquidity_b: format!("{}", liq_b),
+                profitable: spread > fee_threshold,
+            });
+        }
+        self.dashboard.update_pairs(snapshots);
     }
 }
 

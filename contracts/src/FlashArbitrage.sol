@@ -72,6 +72,8 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     error OnlyOwner();
     error Reentrancy();
     error InvalidCallback();
+    error InvalidAmount();
+    error InvalidPoolPair();
     error InsufficientProfit(uint256 actual, uint256 required);
 
     // =========================================================================
@@ -99,6 +101,15 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
     /// @param params The arbitrage parameters
     function executeArbitrage(ArbParams calldata params) external onlyOwner {
         if (_executing) revert Reentrancy();
+        if (params.amountIn <= 0) revert InvalidAmount();
+        if (params.poolA == params.poolB) revert InvalidPoolPair();
+
+        address token0A = IUniswapV3Pool(params.poolA).token0();
+        address token1A = IUniswapV3Pool(params.poolA).token1();
+        if (token0A != IUniswapV3Pool(params.poolB).token0() || token1A != IUniswapV3Pool(params.poolB).token1()) {
+            revert InvalidPoolPair();
+        }
+
         _executing = true;
         _arbPoolA = params.poolA;
         _arbPoolB = params.poolB;

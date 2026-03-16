@@ -148,6 +148,24 @@ impl AppConfig {
         if self.contracts.flash_liquidator == "0x0000000000000000000000000000000000000000" {
             eyre::bail!("contracts.flash_liquidator is zero address — deploy the contract first");
         }
+        if let Some(arb) = &self.arbitrage {
+            if arb.enabled {
+                if arb.flash_arbitrage_contract == "0x0000000000000000000000000000000000000000" {
+                    eyre::bail!(
+                        "arbitrage.flash_arbitrage_contract is zero address — deploy the contract first"
+                    );
+                }
+                if arb.pairs.is_empty() {
+                    eyre::bail!("arbitrage.enabled=true but no arbitrage pairs are configured");
+                }
+                if arb.max_gas_price_gwei <= 0.0 {
+                    eyre::bail!("arbitrage.max_gas_price_gwei must be > 0");
+                }
+                if arb.min_profit_usd < 0.0 {
+                    eyre::bail!("arbitrage.min_profit_usd must be >= 0");
+                }
+            }
+        }
         Ok(())
     }
 

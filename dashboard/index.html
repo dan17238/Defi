@@ -3,380 +3,384 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Liquidator</title>
+<title>MEV Bot</title>
 <style>
 :root{
-  --bg:#0a0a0a;--bg2:#111;--card:rgba(22,22,24,.85);--card-s:#1c1c1e;
-  --t:#e5e5e7;--t2:#8e8e93;--t3:#48484a;
-  --bd:rgba(255,255,255,.06);--ac:#0a84ff;--g:#30d158;--o:#ff9f0a;--r:#ff453a;--p:#bf5af2;--tl:#64d2ff;
-  --sh:0 1px 2px rgba(0,0,0,.4);--sh2:0 4px 12px rgba(0,0,0,.5);
-  --rd:10px;
+  --bg:#09090b;--bg2:#111113;--card:rgba(22,22,26,.9);--card-s:#1a1a1e;
+  --t:#e4e4e7;--t2:#8b8b8e;--t3:#44444a;
+  --bd:rgba(255,255,255,.06);--ac:#3b82f6;--g:#22c55e;--o:#f59e0b;--r:#ef4444;--p:#a855f7;--tl:#06b6d4;
+  --sh:0 1px 3px rgba(0,0,0,.5);--rd:8px;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;background:var(--bg);color:var(--t);-webkit-font-smoothing:antialiased;font-size:12px;line-height:1.35}
+body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Helvetica Neue',sans-serif;background:var(--bg);color:var(--t);-webkit-font-smoothing:antialiased;font-size:12px;line-height:1.4}
 .mono{font-family:'SF Mono',SFMono-Regular,Menlo,monospace;font-size:11px}
-
-/* Nav */
-.nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--bd);padding:0 16px;height:38px;display:flex;align-items:center;justify-content:space-between}
-.nav-l{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
-.nav-l svg{width:16px;height:16px;color:var(--ac)}
-.nav-r{display:flex;align-items:center;gap:12px;font-size:11px;color:var(--t2)}
-.dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:3px}
-.dot.on{background:var(--g);box-shadow:0 0 4px var(--g)}.dot.off{background:var(--r)}.dot.w{background:var(--o)}
-.tag{font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:.05em}
-.tag.dry{background:rgba(100,210,255,.15);color:var(--tl)}
-.tag.live{background:rgba(48,209,88,.15);color:var(--g)}
-
-/* Layout */
-.wrap{max-width:1400px;margin:0 auto;padding:8px 12px 32px}
+.nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--bd);padding:0 20px;height:42px;display:flex;align-items:center;justify-content:space-between}
+.nav-l{display:flex;align-items:center;gap:8px}
+.nav-brand{font-size:14px;font-weight:700;letter-spacing:-.02em}
+.nav-tabs{display:flex;gap:2px;background:rgba(255,255,255,.04);border-radius:6px;padding:2px;margin-left:16px}
+.nav-tabs button{border:none;background:transparent;font-family:inherit;font-size:11px;font-weight:500;color:var(--t3);padding:4px 14px;border-radius:5px;cursor:pointer;transition:.15s}
+.nav-tabs button.on{background:var(--card-s);color:var(--t);box-shadow:var(--sh)}
+.nav-tabs button:hover:not(.on){color:var(--t2)}
+.nav-r{display:flex;align-items:center;gap:14px;font-size:11px;color:var(--t2)}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot.on{background:var(--g);box-shadow:0 0 6px var(--g)}.dot.off{background:var(--r)}.dot.w{background:var(--o)}
+.tag{font-size:9px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.06em}
+.tag.dry{background:rgba(6,182,212,.12);color:var(--tl)}.tag.live{background:rgba(34,197,94,.12);color:var(--g)}
+.wrap{max-width:1400px;margin:0 auto;padding:10px 16px 40px}
+.page{display:none}.page.on{display:block}
 .row{display:flex;gap:8px;margin-bottom:8px}
 .row>.col{flex:1;min-width:0}
-
-/* Card */
-.c{background:var(--card);border:1px solid var(--bd);border-radius:var(--rd);box-shadow:var(--sh)}
-
-/* ─── Top metrics strip ─── */
+.c{background:var(--card);border:1px solid var(--bd);border-radius:var(--rd);box-shadow:var(--sh);overflow:hidden}
 .metrics{display:flex}
-.m{flex:1;padding:8px 12px;border-right:1px solid var(--bd);min-width:0}
+.m{flex:1;padding:10px 14px;border-right:1px solid var(--bd);min-width:0}
 .m:last-child{border-right:none}
-.m-k{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;white-space:nowrap}
-.m-v{font-size:18px;font-weight:700;letter-spacing:-.02em;line-height:1.1;white-space:nowrap}
-.m-v .u{font-size:10px;font-weight:500;color:var(--t3);margin-left:1px}
-.m-s{font-size:9px;color:var(--t3);margin-top:1px;white-space:nowrap}
+.m-k{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;white-space:nowrap}
+.m-v{font-size:20px;font-weight:700;letter-spacing:-.03em;line-height:1.1;white-space:nowrap}
+.m-v .u{font-size:10px;font-weight:500;color:var(--t3);margin-left:2px}
+.m-s{font-size:9px;color:var(--t3);margin-top:2px;white-space:nowrap}
 .m-v.pos{color:var(--g)}.m-v.neg{color:var(--r)}
-
-/* ─── Pipeline ─── */
 .pipe{display:flex;align-items:stretch}
-.pipe-s{flex:1;text-align:center;padding:6px 4px;border-right:1px solid var(--bd);position:relative}
+.pipe-s{flex:1;text-align:center;padding:8px 4px;border-right:1px solid var(--bd);position:relative}
 .pipe-s:last-child{border-right:none}
-.pipe-s:not(:last-child)::after{content:'';position:absolute;right:-5px;top:50%;transform:translateY(-50%);border:3px solid transparent;border-left-color:var(--t3);z-index:1}
+.pipe-s:not(:last-child)::after{content:'';position:absolute;right:-5px;top:50%;transform:translateY(-50%);border:4px solid transparent;border-left-color:var(--t3);z-index:1}
 .pipe-n{font-size:8px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.04em}
-.pipe-v{font-size:15px;font-weight:700;margin:1px 0;line-height:1}
+.pipe-v{font-size:16px;font-weight:700;margin:2px 0;line-height:1}
 .pipe-v .u{font-size:8px;font-weight:500;color:var(--t3)}
 .pipe-t{font-size:8px}
-
-/* Section label */
-.sh{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;padding:6px 10px 4px}
-
-/* ─── Infra rows ─── */
-.inf{display:flex;align-items:center;gap:6px;padding:4px 10px;border-bottom:1px solid var(--bd);font-size:11px}
+.sh{font-size:9px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;padding:8px 12px 4px}
+.inf{display:flex;align-items:center;gap:6px;padding:5px 12px;border-bottom:1px solid var(--bd);font-size:11px}
 .inf:last-child{border-bottom:none}
 .inf-d{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 .inf-d.ok{background:var(--g)}.inf-d.er{background:var(--r)}.inf-d.w{background:var(--o)}
 .inf-k{flex:1;color:var(--t2)}.inf-v{font-weight:500;color:var(--t)}
 .inf-v.mono{font-size:10px}
-
-/* ─── Table ─── */
 .tb{width:100%;border-collapse:collapse}
-.tb th{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:5px 10px;border-bottom:1px solid var(--bd)}
-.tb td{font-size:11px;padding:5px 10px;border-bottom:1px solid var(--bd)}
+.tb th{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:6px 12px;border-bottom:1px solid var(--bd)}
+.tb td{font-size:11px;padding:5px 12px;border-bottom:1px solid var(--bd)}
 .tb tr:last-child td{border-bottom:none}
 .tb tr:hover{background:rgba(255,255,255,.02)}
-.tb-h{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--bd)}
+.tb-h{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--bd)}
 .tb-t{font-size:12px;font-weight:600}
-
-/* Tabs */
-.tabs{display:flex;gap:1px;background:var(--bg);border-radius:6px;padding:2px}
-.tabs button{border:none;background:transparent;font-family:inherit;font-size:10px;font-weight:500;color:var(--t3);padding:3px 10px;border-radius:4px;cursor:pointer;transition:.12s;white-space:nowrap}
-.tabs button.on{background:var(--card-s);color:var(--t);box-shadow:var(--sh)}
-.tabs button:hover:not(.on){color:var(--t2)}
-
-/* Pills */
-.pill{font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px;display:inline-block}
-.pill.ok{background:rgba(48,209,88,.12);color:var(--g)}
-.pill.er{background:rgba(255,69,58,.12);color:var(--r)}
-.pill.sm{background:rgba(100,210,255,.1);color:var(--tl)}
-.pill.w{background:rgba(255,159,10,.12);color:var(--o)}
+.empty-row{text-align:center;padding:20px;color:var(--t3);font-size:11px}
+.pill{font-size:9px;font-weight:600;padding:2px 7px;border-radius:4px;display:inline-block}
+.pill.ok{background:rgba(34,197,94,.12);color:var(--g)}
+.pill.er{background:rgba(239,68,68,.12);color:var(--r)}
+.pill.sm{background:rgba(6,182,212,.1);color:var(--tl)}
+.pill.w{background:rgba(245,158,11,.12);color:var(--o)}
+.pill.p{background:rgba(168,85,247,.12);color:var(--p)}
+.pill.det{background:rgba(59,130,246,.12);color:var(--ac)}
 .pos{color:var(--g);font-weight:600}.neg{color:var(--r);font-weight:600}
 a.lk{font-family:'SF Mono',monospace;font-size:10px;color:var(--ac);text-decoration:none}
 a.lk:hover{text-decoration:underline}
-
-/* Charts */
-.bars{display:flex;align-items:flex-end;gap:3px;height:48px}
-.bar-c{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px}
-.bar{width:100%;border-radius:2px 2px 0 0;min-height:1px}
-.bar.g{background:linear-gradient(180deg,var(--g),rgba(48,209,88,.3))}
-.bar.r{background:linear-gradient(180deg,var(--r),rgba(255,69,58,.3))}
-.bar-l{font-size:7px;color:var(--t3)}
-.spark{width:100%;height:48px}
-.spark svg{width:100%;height:100%}
-
-/* Grid */
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-@media(max-width:900px){.g2,.row{flex-direction:column}}
-
-/* Scrollbar */
+.spark{width:100%;height:52px}.spark svg{width:100%;height:100%}
+/* Spread bar */
+.spread-bar{height:6px;border-radius:3px;background:var(--bg);position:relative;overflow:hidden;margin:4px 0}
+.spread-fill{height:100%;border-radius:3px;transition:width .3s}
+/* Pool card */
+.pool-card{padding:10px 14px;border-bottom:1px solid var(--bd)}
+.pool-card:last-child{border-bottom:none}
+.pool-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.pool-name{font-weight:600;font-size:12px}
+.pool-prices{display:flex;gap:16px;font-size:11px;color:var(--t2);margin-bottom:4px}
+.pool-prices span{display:flex;align-items:center;gap:4px}
+.pool-prices .label{font-size:9px;color:var(--t3);text-transform:uppercase}
+.pool-spread-num{font-size:16px;font-weight:700;letter-spacing:-.02em}
+/* Event dot */
+.ev-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;flex-shrink:0}
+.ev-dot.det{background:var(--ac)}.ev-dot.sim{background:var(--tl)}.ev-dot.sub{background:var(--o)}.ev-dot.ok{background:var(--g)}.ev-dot.rev{background:var(--r)}.ev-dot.skip{background:var(--t3)}
+@media(max-width:900px){.row{flex-direction:column}}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--t3);border-radius:2px}
 </style>
 </head>
 <body>
-
 <nav class="nav">
   <div class="nav-l">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-    Liquidator
+    <div class="nav-brand">MEV Bot</div>
+    <div class="nav-tabs">
+      <button class="on" onclick="switchTab('liq')">清算</button>
+      <button onclick="switchTab('arb')">套利</button>
+    </div>
   </div>
   <div class="nav-r">
     <span id="mode" class="tag dry">DRY-RUN</span>
     <span><span class="dot on" id="sDot"></span><span id="sText">运行中</span></span>
-    <span class="mono" id="blk">#—</span>
+    <span class="mono" id="blk">#--</span>
     <span id="clk">--:--:--</span>
   </div>
 </nav>
-
 <div class="wrap">
 
-  <!-- Row 1: Metrics -->
-  <div class="c" style="margin-bottom:8px">
-    <div class="metrics">
-      <div class="m"><div class="m-k">净利润</div><div class="m-v" id="netP">0.000<span class="u">ETH</span></div><div class="m-s" id="netU">$0.00</div></div>
-      <div class="m"><div class="m-k">今日 P&L</div><div class="m-v" id="dayP">0.000<span class="u">ETH</span></div><div class="m-s" id="dayN">0 笔</div></div>
-      <div class="m"><div class="m-k">Gas 累计</div><div class="m-v" id="gasP">0.000<span class="u">ETH</span></div><div class="m-s" id="gasA">—</div></div>
-      <div class="m"><div class="m-k">钱包</div><div class="m-v" id="bal">—<span class="u">ETH</span></div><div class="m-s mono" id="addr">—</div></div>
-      <div class="m"><div class="m-k">胜率</div><div class="m-v" id="wr">—<span class="u">%</span></div><div class="m-s" id="wrd">—</div></div>
-      <div class="m"><div class="m-k">运行时间</div><div class="m-v" id="uptime">—</div><div class="m-s" id="botMode">Dry-Run</div></div>
-      <div class="m"><div class="m-k">区块处理</div><div class="m-v" id="blocks">0</div><div class="m-s" id="errs">0 错误</div></div>
-      <div class="m"><div class="m-k">扫描仓位</div><div class="m-v" id="scanned">0</div><div class="m-s" id="tracked">0 追踪</div></div>
-    </div>
-  </div>
-
-  <!-- Row 2: Pipeline + Infra + Charts -->
+<!-- ═══════════════ TAB 1: 清算 ═══════════════ -->
+<div id="pageLiq" class="page on">
+  <div class="c" style="margin-bottom:8px"><div class="metrics">
+    <div class="m"><div class="m-k">清算利润</div><div class="m-v pos" id="liqNetP">$0.00</div><div class="m-s" id="liqNetE">0.000 ETH</div></div>
+    <div class="m"><div class="m-k">清算次数</div><div class="m-v" id="liqCount">0</div><div class="m-s" id="liqSuccess">0 成功</div></div>
+    <div class="m"><div class="m-k">胜率</div><div class="m-v" id="liqWr">--<span class="u">%</span></div><div class="m-s" id="liqWrd">--</div></div>
+    <div class="m"><div class="m-k">平均延迟</div><div class="m-v" id="liqLat">--<span class="u">ms</span></div><div class="m-s">签名+发送</div></div>
+    <div class="m"><div class="m-k">运行时间</div><div class="m-v" id="liqUptime">--</div><div class="m-s" id="liqErrs">0 错误</div></div>
+    <div class="m"><div class="m-k">区块 / 扫描</div><div class="m-v" id="liqBlocks">0</div><div class="m-s" id="liqScanned">0 次扫描</div></div>
+  </div></div>
   <div class="row">
-    <!-- Pipeline -->
-    <div class="col" style="flex:2">
-      <div class="c" style="height:100%">
-        <div class="sh">链路延迟</div>
-        <div class="pipe">
-          <div class="pipe-s"><div class="pipe-n">Feed</div><div class="pipe-v" id="pF">0<span class="u">ms</span></div><div class="pipe-t" id="pFs" style="color:var(--g)">推送</div></div>
-          <div class="pipe-s"><div class="pipe-n">读取</div><div class="pipe-v" id="pR">&lt;1<span class="u">ms</span></div><div class="pipe-t" id="pRs">IPC</div></div>
-          <div class="pipe-s"><div class="pipe-n">模拟</div><div class="pipe-v" id="pM">~2<span class="u">ms</span></div><div class="pipe-t" id="pMs">revm</div></div>
-          <div class="pipe-s"><div class="pipe-n">发送</div><div class="pipe-v" id="pS">—<span class="u">ms</span></div><div class="pipe-t" id="pSs">seq</div></div>
-          <div class="pipe-s"><div class="pipe-n">总计</div><div class="pipe-v" id="pT">—<span class="u">ms</span></div><div class="pipe-t" id="pTs">&lt;5ms</div></div>
-        </div>
-      </div>
-    </div>
-    <!-- Infra -->
-    <div class="col" style="flex:1">
-      <div class="c" style="height:100%">
-        <div class="sh">基础设施</div>
-        <div class="inf"><div class="inf-d w" id="nD"></div><span class="inf-k">节点</span><span class="inf-v" id="nV">同步中</span></div>
-        <div class="inf"><div class="inf-d ok" id="fD"></div><span class="inf-k">Seq Feed</span><span class="inf-v" id="fV">—</span></div>
-        <div class="inf"><div class="inf-d er" id="bD"></div><span class="inf-k">Bot</span><span class="inf-v" id="bV">未启动</span></div>
-        <div class="inf"><div class="inf-d ok"></div><span class="inf-k">RPC</span><span class="inf-v mono" id="rpcV">—</span></div>
-      </div>
-    </div>
-    <!-- Latency chart -->
-    <div class="col" style="flex:2">
-      <div class="c" style="height:100%;padding:0 10px 6px">
-        <div class="sh" style="padding-left:0">Sequencer 延迟 (ms)</div>
-        <div class="spark" id="chart2"></div>
-      </div>
-    </div>
+    <div class="col" style="flex:2"><div class="c" style="height:100%"><div class="sh">清算链路延迟</div><div class="pipe">
+      <div class="pipe-s"><div class="pipe-n">Feed</div><div class="pipe-v">0<span class="u">ms</span></div><div class="pipe-t" style="color:var(--g)">推送</div></div>
+      <div class="pipe-s"><div class="pipe-n">读取</div><div class="pipe-v" id="pR">&lt;1<span class="u">ms</span></div><div class="pipe-t" id="pRs">IPC</div></div>
+      <div class="pipe-s"><div class="pipe-n">模拟</div><div class="pipe-v">~2<span class="u">ms</span></div><div class="pipe-t" style="color:var(--tl)">revm</div></div>
+      <div class="pipe-s"><div class="pipe-n">发送</div><div class="pipe-v" id="pS">--<span class="u">ms</span></div><div class="pipe-t" id="pSs">seq</div></div>
+      <div class="pipe-s"><div class="pipe-n">总计</div><div class="pipe-v" id="pT">--<span class="u">ms</span></div><div class="pipe-t" id="pTs">&lt;5ms</div></div>
+    </div></div></div>
+    <div class="col" style="flex:1"><div class="c" style="height:100%"><div class="sh">基础设施</div>
+      <div class="inf"><div class="inf-d w" id="nD"></div><span class="inf-k">节点</span><span class="inf-v" id="nV">同步中</span></div>
+      <div class="inf"><div class="inf-d ok" id="fD"></div><span class="inf-k">Seq Feed</span><span class="inf-v" id="fV">--</span></div>
+      <div class="inf"><div class="inf-d er" id="bD"></div><span class="inf-k">Bot</span><span class="inf-v" id="bV">未启动</span></div>
+      <div class="inf"><div class="inf-d ok"></div><span class="inf-k">RPC</span><span class="inf-v mono" id="rpcV">--</span></div>
+    </div></div>
   </div>
-
-  <!-- Row 3: PnL chart + Protocol stats -->
   <div class="row">
-    <div class="col" style="flex:3">
-      <div class="c" style="padding:0 10px 6px">
-        <div class="sh" style="padding-left:0">每日净利润 (14天 ETH)</div>
-        <div class="bars" id="chart1"></div>
-      </div>
-    </div>
-    <div class="col" style="flex:2">
-      <div class="c">
-        <div class="sh">AAVE v3 状态</div>
-        <div class="inf"><span class="inf-k">Pool</span><span class="inf-v mono">0x794a...14aD</span></div>
-        <div class="inf"><span class="inf-k">追踪借款人</span><span class="inf-v" id="aaveBorrowers">0</span></div>
-        <div class="inf"><span class="inf-k">HF &lt; 1.5</span><span class="inf-v" id="aaveDanger" style="color:var(--o)">0</span></div>
-        <div class="inf"><span class="inf-k">我的清算</span><span class="inf-v" id="aaveMy">0</span></div>
-        <div class="inf"><span class="inf-k">市场清算 (30d)</span><span class="inf-v" id="aaveMkt">—</span></div>
-        <div class="inf"><span class="inf-k">竞争 Bot</span><span class="inf-v" id="aaveBots">—</span></div>
-      </div>
-    </div>
+    <div class="col" style="flex:3"><div class="c" style="padding:0 12px 8px"><div class="sh" style="padding-left:0">Sequencer 延迟 (ms)</div><div class="spark" id="chart2"></div></div></div>
+    <div class="col" style="flex:2"><div class="c" style="height:100%"><div class="sh">AAVE v3</div>
+      <div class="inf"><span class="inf-k">Pool</span><span class="inf-v mono">0x794a...14aD</span></div>
+      <div class="inf"><span class="inf-k">HF &lt; 1.5</span><span class="inf-v" id="aaveDanger" style="color:var(--o)">0</span></div>
+      <div class="inf"><span class="inf-k">市场清算 (30d)</span><span class="inf-v" id="aaveMkt">--</span></div>
+      <div class="inf"><span class="inf-k">竞争 Bot</span><span class="inf-v" id="aaveBots">--</span></div>
+    </div></div>
   </div>
-
-  <!-- Row 4: My Trades -->
-  <div class="c" style="margin-bottom:8px">
-    <div class="tb-h"><div class="tb-t" id="tradeTitle">交易记录</div></div>
-    <div style="max-height:200px;overflow-y:auto">
-      <table class="tb">
-        <thead><tr><th>时间</th><th>对</th><th>金额</th><th>利润</th><th>Gas</th><th>延迟</th><th>状态</th><th>TX</th></tr></thead>
-        <tbody id="tbTrades"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Row 5: Near Liquidation + Competitors side by side -->
+  <div class="c" style="margin-bottom:8px"><div class="tb-h"><div class="tb-t" id="tradeTitle">交易记录</div></div>
+    <div style="max-height:200px;overflow-y:auto"><table class="tb"><thead><tr><th>时间</th><th>对</th><th>金额</th><th>利润</th><th>Gas</th><th>延迟</th><th>状态</th><th>TX</th></tr></thead><tbody id="tbTrades"></tbody></table></div></div>
   <div class="row">
-    <div class="col">
-      <div class="c" style="height:100%">
-        <div class="tb-h"><div class="tb-t" id="nearTitle">危险仓位</div></div>
-        <div style="max-height:200px;overflow-y:auto">
-          <table class="tb">
-            <thead><tr><th>借款人</th><th>HF</th><th>抵押品</th><th>债务</th><th>差额</th></tr></thead>
-            <tbody id="tbNear"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="c" style="height:100%">
-        <div class="tb-h"><div class="tb-t" id="botTitle">竞争对手</div></div>
-        <div style="max-height:200px;overflow-y:auto">
-          <table class="tb">
-            <thead><tr><th>#</th><th>地址</th><th>次数</th><th>协议</th><th>最近</th></tr></thead>
-            <tbody id="tbBots"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    <div class="col"><div class="c" style="height:100%"><div class="tb-h"><div class="tb-t" id="nearTitle">危险仓位</div></div>
+      <div style="max-height:200px;overflow-y:auto"><table class="tb"><thead><tr><th>借款人</th><th>HF</th><th>抵押品</th><th>债务</th><th>差额</th></tr></thead><tbody id="tbNear"></tbody></table></div></div></div>
+    <div class="col"><div class="c" style="height:100%"><div class="tb-h"><div class="tb-t" id="botTitle">竞争对手</div></div>
+      <div style="max-height:200px;overflow-y:auto"><table class="tb"><thead><tr><th>#</th><th>地址</th><th>次数</th><th>协议</th><th>最近</th></tr></thead><tbody id="tbBots"></tbody></table></div></div></div>
   </div>
-
-  <!-- Row 6: Market Liquidations (full width) -->
-  <div class="c" style="margin-top:8px">
-    <div class="tb-h"><div class="tb-t" id="mktTitle">市场清算</div></div>
-    <div style="max-height:200px;overflow-y:auto">
-      <table class="tb">
-        <thead><tr><th>时间</th><th>被清算</th><th>清算人</th><th>对</th><th>债务额</th><th>抵押额</th><th>TX</th></tr></thead>
-        <tbody id="tbMkt"></tbody>
-      </table>
-    </div>
-  </div>
-
+  <div class="c" style="margin-top:8px"><div class="tb-h"><div class="tb-t" id="mktTitle">市场清算</div></div>
+    <div style="max-height:200px;overflow-y:auto"><table class="tb"><thead><tr><th>时间</th><th>被清算</th><th>清算人</th><th>对</th><th>债务额</th><th>抵押额</th><th>TX</th></tr></thead><tbody id="tbMkt"></tbody></table></div></div>
 </div>
 
-<script>
-const S={trades:[],pnl:Array(14).fill(0),lat:[],chain:null};
-const $=id=>document.getElementById(id);
-const h=(id,v)=>{$(id).innerHTML=v};
-function lc(ms,g,w){return ms<=g?'var(--g)':ms<=w?'var(--o)':'var(--r)'}
+<!-- ═══════════════ TAB 2: 套利 ═══════════════ -->
+<div id="pageArb" class="page">
+  <!-- Arb Metrics -->
+  <div class="c" style="margin-bottom:8px"><div class="metrics">
+    <div class="m"><div class="m-k">套利利润</div><div class="m-v pos" id="arbNetP">$0.00</div><div class="m-s" id="arbNetE">0.000 ETH</div></div>
+    <div class="m"><div class="m-k">提交 / 确认</div><div class="m-v" style="color:var(--p)" id="arbAttempts">0 / 0</div><div class="m-s" id="arbSuccLabel">--</div></div>
+    <div class="m"><div class="m-k">成功率</div><div class="m-v" id="arbWr">--<span class="u">%</span></div><div class="m-s">提交 &rarr; 确认</div></div>
+    <div class="m"><div class="m-k">扫描次数</div><div class="m-v" id="arbScans">0</div><div class="m-s" id="arbOpps">0 个机会</div></div>
+    <div class="m"><div class="m-k">运行时间</div><div class="m-v" id="arbUptime">--</div><div class="m-s" id="arbErrs">0 错误</div></div>
+  </div></div>
 
+  <!-- Pipeline + Config -->
+  <div class="row">
+    <div class="col" style="flex:3"><div class="c" style="height:100%"><div class="sh">套利链路延迟 (目标 &lt;3.5ms)</div><div class="pipe">
+      <div class="pipe-s"><div class="pipe-n">Feed</div><div class="pipe-v">0<span class="u">ms</span></div><div class="pipe-t" style="color:var(--g)">推送</div></div>
+      <div class="pipe-s"><div class="pipe-n">Multicall</div><div class="pipe-v">&lt;0.3<span class="u">ms</span></div><div class="pipe-t" style="color:var(--tl)">slot0</div></div>
+      <div class="pipe-s"><div class="pipe-n">检测</div><div class="pipe-v">&lt;0.1<span class="u">ms</span></div><div class="pipe-t" style="color:var(--g)">价差</div></div>
+      <div class="pipe-s"><div class="pipe-n">模拟</div><div class="pipe-v">~1<span class="u">ms</span></div><div class="pipe-t" style="color:var(--tl)">revm</div></div>
+      <div class="pipe-s"><div class="pipe-n">发送</div><div class="pipe-v" id="arbPS">--<span class="u">ms</span></div><div class="pipe-t" id="arbPSs">seq</div></div>
+      <div class="pipe-s"><div class="pipe-n">总计</div><div class="pipe-v" id="arbPT">--<span class="u">ms</span></div><div class="pipe-t" id="arbPTs">--</div></div>
+    </div></div></div>
+    <div class="col" style="flex:1"><div class="c" style="height:100%"><div class="sh">Gas 策略</div>
+      <div class="inf"><span class="inf-k">利润 &gt;$50</span><span class="inf-v" style="color:var(--g)">1.0 gwei</span></div>
+      <div class="inf"><span class="inf-k">利润 &gt;$10</span><span class="inf-v" style="color:var(--o)">0.1 gwei</span></div>
+      <div class="inf"><span class="inf-k">其他</span><span class="inf-v" style="color:var(--t2)">0.02 gwei</span></div>
+      <div class="inf"><span class="inf-k">最小利润</span><span class="inf-v">$0.50</span></div>
+    </div></div>
+  </div>
+
+  <!-- Live Pool Pairs -->
+  <div class="c" style="margin-bottom:8px">
+    <div class="tb-h"><div class="tb-t">监控池对 (实时)</div><div style="font-size:10px;color:var(--t3)" id="arbPairRefresh">--</div></div>
+    <div id="arbPairsContainer">
+      <div class="empty-row" style="padding:24px">等待数据...</div>
+    </div>
+  </div>
+
+  <!-- Spread History Chart -->
+  <div class="c" style="margin-bottom:8px;padding:0 12px 8px">
+    <div class="sh" style="padding-left:0">价差历史 (bps)</div>
+    <div class="spark" id="spreadChart"></div>
+  </div>
+
+  <!-- Event Log -->
+  <div class="c">
+    <div class="tb-h"><div class="tb-t" id="arbEventTitle">事件流</div>
+      <div style="display:flex;gap:4px">
+        <button class="pill det" style="cursor:pointer;border:none" onclick="filterEvents('all', event)">全部</button>
+        <button class="pill det" style="cursor:pointer;border:none;opacity:.5" onclick="filterEvents('detected', event)">检测</button>
+        <button class="pill sm" style="cursor:pointer;border:none;opacity:.5" onclick="filterEvents('simulated', event)">模拟</button>
+        <button class="pill w" style="cursor:pointer;border:none;opacity:.5" onclick="filterEvents('submitted', event)">提交</button>
+        <button class="pill ok" style="cursor:pointer;border:none;opacity:.5" onclick="filterEvents('confirmed', event)">确认</button>
+        <button class="pill er" style="cursor:pointer;border:none;opacity:.5" onclick="filterEvents('reverted', event)">失败</button>
+      </div>
+    </div>
+    <div style="max-height:300px;overflow-y:auto">
+      <table class="tb"><thead><tr><th>时间</th><th>事件</th><th>池对</th><th>价差</th><th>利润</th><th>Gas</th><th>延迟</th><th>TX</th></tr></thead>
+      <tbody id="tbArbEvents"></tbody></table>
+    </div>
+  </div>
+</div>
+
+</div>
+<script>
+const S={trades:[],lat:[],chain:null,arb:{events:[],pairs:[],spread_history:[]}};
+let arbFilter='all';
+const $=id=>document.getElementById(id);
+const h=(id,v)=>{const el=$(id);if(el)el.innerHTML=v};
+function lc(ms,g,w){return ms<=g?'var(--g)':ms<=w?'var(--o)':'var(--r)'}
+function switchTab(tab){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.nav-tabs button').forEach(b=>b.classList.remove('on'));
+  if(tab==='arb'){$('pageArb').classList.add('on');document.querySelectorAll('.nav-tabs button')[1].classList.add('on')}
+  else{$('pageLiq').classList.add('on');document.querySelectorAll('.nav-tabs button')[0].classList.add('on')}
+}
+function filterEvents(kind, evt){
+  arbFilter=kind;
+  document.querySelectorAll('#pageArb .tb-h button.pill').forEach(b=>b.style.opacity='.5');
+  if(evt?.target)evt.target.style.opacity='1';
+  renderArbEvents();
+}
 setInterval(()=>$('clk').textContent=new Date().toTimeString().slice(0,8),1000);
 
-// ─── Render all 4 tables ───
-function renderAll(){renderTrades();renderNear();renderBots();renderMkt()}
-
-function renderTrades(){
-  const bd=$('tbTrades'),tt=$('tradeTitle');
-  tt.textContent=S.trades.length?`${S.trades.length} 笔交易`:'交易记录';
-  if(!S.trades.length){bd.innerHTML='<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--t3)">等待 Bot 启动</td></tr>';return}
-  bd.innerHTML=S.trades.map(t=>{const c=parseFloat(t.profit)>=0?'pos':'neg';return `<tr><td class="mono" style="color:var(--t2)">${t.time}</td><td>${t.pair}</td><td>${t.amount}</td><td class="${c}">${t.profit}E</td><td style="color:var(--t2)">${t.gas}E</td><td>${t.latency}ms</td><td><span class="pill ${t.status==='ok'?'ok':t.status==='err'?'er':'sm'}">${{ok:'成功',err:'失败',sim:'模拟'}[t.status]||'?'}</span></td><td>${t.tx==='—'?'—':`<a class="lk" href="https://arbiscan.io/tx/${t.tx}" target="_blank">${t.tx.slice(0,10)}...</a>`}</td></tr>`}).join('');
+function fmtPrice(v){
+  if(!Number.isFinite(v) || v <= 0) return '--';
+  const digits = v >= 1000 ? 2 : v >= 1 ? 4 : 6;
+  return v.toLocaleString(undefined, {maximumFractionDigits: digits});
 }
 
-function renderNear(){
-  const ps=S.chain?.near_liquidation||[],bd=$('tbNear'),tt=$('nearTitle');
-  tt.textContent=ps.length?`${ps.length} 个危险仓位`:'危险仓位';
-  if(!ps.length){bd.innerHTML='<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--t3)">无 HF&lt;1.5 仓位</td></tr>';return}
-  bd.innerHTML=ps.map(p=>{const v=parseFloat(p.health_factor),c=v<1?'var(--r)':v<1.1?'var(--o)':'var(--t)';const gap=((v-1)*100).toFixed(1);return `<tr><td><a class="lk" href="https://arbiscan.io/address/${p.user_full||''}" target="_blank">${p.user}</a></td><td style="font-weight:700;color:${c}">${p.health_factor}</td><td>${p.collateral_usd}</td><td>${p.debt_usd}</td><td style="color:${c}">${v>=1?'+':''}${gap}%</td></tr>`}).join('');
+// ─── Liquidation tables ───
+function renderTrades(){const bd=$('tbTrades'),tt=$('tradeTitle');tt.textContent=S.trades.length?`${S.trades.length} 笔交易`:'交易记录';if(!S.trades.length){bd.innerHTML='<tr><td colspan="8" class="empty-row">等待 Bot 启动</td></tr>';return}bd.innerHTML=S.trades.map(t=>{const c=parseFloat(t.profit)>=0?'pos':'neg';return `<tr><td class="mono" style="color:var(--t2)">${t.time}</td><td>${t.pair}</td><td>${t.amount}</td><td class="${c}">${t.profit}E</td><td style="color:var(--t2)">${t.gas}E</td><td>${t.latency}ms</td><td><span class="pill ${t.status==='ok'?'ok':t.status==='err'?'er':'sm'}">${{ok:'成功',err:'失败',sim:'模拟'}[t.status]||'?'}</span></td><td>${t.tx==='—'?'—':`<a class="lk" href="https://arbiscan.io/tx/${t.tx}" target="_blank">${t.tx.slice(0,10)}...</a>`}</td></tr>`}).join('')}
+function renderNear(){const ps=S.chain?.near_liquidation||[],bd=$('tbNear'),tt=$('nearTitle');tt.textContent=ps.length?`${ps.length} 个危险仓位`:'危险仓位';if(!ps.length){bd.innerHTML='<tr><td colspan="5" class="empty-row">无 HF&lt;1.5 仓位</td></tr>';return}bd.innerHTML=ps.map(p=>{const v=parseFloat(p.health_factor),c=v<1?'var(--r)':v<1.1?'var(--o)':'var(--t)';const gap=((v-1)*100).toFixed(1);return `<tr><td><a class="lk" href="https://arbiscan.io/address/${p.user_full||''}" target="_blank">${p.user}</a></td><td style="font-weight:700;color:${c}">${p.health_factor}</td><td>${p.collateral_usd}</td><td>${p.debt_usd}</td><td style="color:${c}">${v>=1?'+':''}${gap}%</td></tr>`}).join('')}
+function renderBots(){const cs=S.chain?.competitors||[],bd=$('tbBots'),tt=$('botTitle');tt.textContent=cs.length?`${cs.length} 个竞争 Bot`:'竞争对手';if(!cs.length){bd.innerHTML='<tr><td colspan="5" class="empty-row">暂无数据</td></tr>';return}bd.innerHTML=cs.map((c,i)=>`<tr><td style="text-align:center">${i+1}</td><td><a class="lk" href="https://arbiscan.io/address/${c.address}" target="_blank">${c.short}</a></td><td style="font-weight:600">${c.count}</td><td>${c.protocols.map(p=>`<span class="pill sm">${p}</span>`).join(' ')}</td><td class="mono" style="color:var(--t2)">${c.last_block?'#'+c.last_block.toLocaleString():'—'}</td></tr>`).join('')}
+function renderMkt(){const ls=S.chain?.market_liquidations||[],bd=$('tbMkt'),tt=$('mktTitle');tt.textContent=ls.length?`${ls.length} 笔市场清算`:'市场清算';if(!ls.length){bd.innerHTML='<tr><td colspan="7" class="empty-row">近期无清算</td></tr>';return}bd.innerHTML=ls.map(l=>`<tr><td class="mono" style="color:var(--t2)">${l.time_ago}</td><td class="mono">${l.user}</td><td class="mono">${l.liquidator}</td><td>${l.collateral}/${l.debt}</td><td>${l.debt_amount} ${l.debt}</td><td>${l.collateral_amount} ${l.collateral}</td><td><a class="lk" href="https://arbiscan.io/tx/${l.tx_hash}" target="_blank">${(l.tx_hash||'').slice(0,10)}...</a></td></tr>`).join('')}
+renderTrades();renderNear();renderBots();renderMkt();
+
+// ─── Arb: Pool pair cards ───
+function renderArbPairs(){
+  const pairs=S.arb.pairs||[];
+  if(!pairs.length){$('arbPairsContainer').innerHTML='<div class="empty-row" style="padding:24px">等待扫描...</div>';return}
+  $('arbPairRefresh').textContent=`${new Date().toLocaleTimeString()} 刷新`;
+  $('arbPairsContainer').innerHTML=pairs.map(p=>{
+    const ratio=Math.min(p.spread_bps/Math.max(p.fee_threshold_bps*2,1),1);
+    const barColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--t3)';
+    const spreadColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--t2)';
+    return `<div class="pool-card">
+      <div class="pool-head">
+        <div class="pool-name">${p.name} ${p.profitable?'<span class="pill ok" style="margin-left:6px">可套利</span>':''}</div>
+        <div class="pool-spread-num" style="color:${spreadColor}">${p.spread_bps.toFixed(1)} <span style="font-size:10px;font-weight:500;color:var(--t3)">bps</span></div>
+      </div>
+      <div class="pool-prices">
+        <span><span class="label">Pool A</span> ${fmtPrice(p.price_a)}</span>
+        <span><span class="label">Pool B</span> ${fmtPrice(p.price_b)}</span>
+        <span><span class="label">门槛</span> ${p.fee_threshold_bps.toFixed(0)} bps</span>
+        <span><span class="label">流动性 A</span> ${Number(p.liquidity_a).toLocaleString()}</span>
+        <span><span class="label">流动性 B</span> ${Number(p.liquidity_b).toLocaleString()}</span>
+      </div>
+      <div class="spread-bar"><div class="spread-fill" style="width:${(ratio*100).toFixed(1)}%;background:${barColor}"></div></div>
+    </div>`}).join('');
 }
 
-function renderBots(){
-  const cs=S.chain?.competitors||[],bd=$('tbBots'),tt=$('botTitle');
-  tt.textContent=cs.length?`${cs.length} 个竞争 Bot`:'竞争对手';
-  if(!cs.length){bd.innerHTML='<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--t3)">暂无数据</td></tr>';return}
-  const m=['\u{1F947}','\u{1F948}','\u{1F949}'];
-  bd.innerHTML=cs.map((c,i)=>`<tr><td style="text-align:center">${i<3?m[i]:i+1}</td><td><a class="lk" href="https://arbiscan.io/address/${c.address}" target="_blank">${c.short}</a></td><td style="font-weight:600">${c.count}</td><td>${c.protocols.map(p=>`<span class="pill sm">${p}</span>`).join(' ')}</td><td class="mono" style="color:var(--t2)">${c.last_block?'#'+c.last_block.toLocaleString():'—'}</td></tr>`).join('');
+// ─── Arb: Spread chart ───
+function renderSpreadChart(){
+  const hist=S.arb.spread_history||[];
+  if(hist.length<2){$('spreadChart').innerHTML='<div style="height:52px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">等待价差数据...</div>';return}
+  // Group by pair name
+  const byPair={};
+  hist.forEach(p=>{if(!byPair[p.pair])byPair[p.pair]=[];byPair[p.pair].push(p)});
+  const pairNames=Object.keys(byPair);
+  if(!pairNames.length)return;
+  const colors=['#a855f7','#06b6d4','#f59e0b','#22c55e'];
+  const w=500,ht=52,pad=2;
+  // Global max across all pairs
+  let allVals=[];pairNames.forEach(n=>byPair[n].forEach(p=>allVals.push(p.spread_bps)));
+  const mn=0,mx=Math.max(...allVals,1);
+  const ty=v=>ht-pad-((v-mn)/(mx-mn))*(ht-pad*2);
+  let svg=`<svg viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none">`;
+  // Threshold lines per pair
+  const pairsData=S.arb.pairs||[];
+  pairsData.forEach((pd,pi)=>{
+    const thY=ty(pd.fee_threshold_bps);
+    svg+=`<line x1="${pad}" y1="${thY}" x2="${w-pad}" y2="${thY}" stroke="${colors[pi%colors.length]}" stroke-width="0.5" stroke-dasharray="3,3" opacity=".4"/>`;
+  });
+  // Draw each pair as separate line
+  pairNames.forEach((name,pi)=>{
+    const pts=byPair[name].slice(-120);if(pts.length<2)return;
+    const c=colors[pi%colors.length];
+    const xs=(w-pad*2)/(pts.length-1);
+    const d=pts.map((p,i)=>`${i?'L':'M'}${pad+i*xs},${ty(p.spread_bps)}`).join(' ');
+    svg+=`<path d="${d}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round"/>`;
+    svg+=`<circle cx="${pad+(pts.length-1)*xs}" cy="${ty(pts[pts.length-1].spread_bps)}" r="2" fill="${c}"/>`;
+  });
+  svg+=`</svg>`;
+  // Legend
+  const legend=pairNames.map((n,i)=>`<span style="color:${colors[i%colors.length]};font-size:9px;font-weight:600;margin-right:10px">\u25CF ${n.split(' ')[0]}</span>`).join('');
+  $('spreadChart').innerHTML=svg+`<div style="text-align:right;margin-top:2px">${legend}</div>`;
 }
 
-function renderMkt(){
-  const ls=S.chain?.market_liquidations||[],bd=$('tbMkt'),tt=$('mktTitle');
-  tt.textContent=ls.length?`${ls.length} 笔市场清算`:'市场清算';
-  if(!ls.length){bd.innerHTML='<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--t3)">近期无清算</td></tr>';return}
-  bd.innerHTML=ls.map(l=>`<tr><td class="mono" style="color:var(--t2)">${l.time_ago}</td><td class="mono">${l.user}</td><td class="mono">${l.liquidator}</td><td>${l.collateral}/${l.debt}</td><td>${l.debt_amount} ${l.debt}</td><td>${l.collateral_amount} ${l.collateral}</td><td><a class="lk" href="https://arbiscan.io/tx/${l.tx_hash}" target="_blank">${(l.tx_hash||'').slice(0,10)}...</a></td></tr>`).join('');
+// ─── Arb: Event log ───
+const evMeta={detected:{dot:'det',label:'检测',color:'var(--ac)'},simulated:{dot:'sim',label:'模拟通过',color:'var(--tl)'},skipped:{dot:'skip',label:'跳过',color:'var(--t3)'},submitted:{dot:'sub',label:'已提交',color:'var(--o)'},confirmed:{dot:'ok',label:'确认',color:'var(--g)'},reverted:{dot:'rev',label:'失败',color:'var(--r)'}};
+function renderArbEvents(){
+  let evts=S.arb.events||[];
+  if(arbFilter!=='all')evts=evts.filter(e=>e.kind===arbFilter);
+  const tt=$('arbEventTitle');
+  tt.textContent=evts.length?`${evts.length} 个事件`:'事件流';
+  const bd=$('tbArbEvents');
+  if(!evts.length){bd.innerHTML='<tr><td colspan="8" class="empty-row">等待套利事件...</td></tr>';return}
+  bd.innerHTML=evts.slice(0,100).map(e=>{
+    const m=evMeta[e.kind]||{dot:'skip',label:e.kind,color:'var(--t3)'};
+    const t=new Date(e.ts);
+    const ts=`${t.getHours().toString().padStart(2,'0')}:${t.getMinutes().toString().padStart(2,'0')}:${t.getSeconds().toString().padStart(2,'0')}.${t.getMilliseconds().toString().padStart(3,'0')}`;
+    const txCell=e.tx_hash?`<a class="lk" href="https://arbiscan.io/tx/${e.tx_hash}" target="_blank">${e.tx_hash.slice(0,12)}...</a>`:'--';
+    return `<tr>
+      <td class="mono" style="color:var(--t2)">${ts}</td>
+      <td><span class="ev-dot ${m.dot}"></span><span style="color:${m.color};font-weight:500">${m.label}</span></td>
+      <td>${e.pair||'--'}</td>
+      <td>${e.spread_bps>0?e.spread_bps.toFixed(1)+' bps':'--'}</td>
+      <td class="${e.profit_usd>0?'pos':e.profit_usd<0?'neg':''}">${e.profit_usd?'$'+e.profit_usd.toFixed(2):'--'}</td>
+      <td style="color:var(--t2)">${e.gas_used||'--'}</td>
+      <td>${e.latency_ms?e.latency_ms+'ms':'--'}</td>
+      <td>${txCell}</td>
+    </tr>`}).join('');
 }
 
-renderAll();
-
-// ─── Charts ───
-function renderC1(){
-  const d=S.pnl,z=d.every(v=>v===0),now=new Date();
-  const lb=d.map((_,i)=>{const x=new Date(now);x.setDate(x.getDate()-13+i);return `${x.getMonth()+1}/${x.getDate()}`});
-  if(z){$('chart1').innerHTML='<div style="height:48px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">暂无数据</div>';return}
-  const mx=Math.max(...d.map(Math.abs),.001);
-  $('chart1').innerHTML=d.map((v,i)=>`<div class="bar-c"><div class="bar ${v>=0?'g':'r'}" style="height:${Math.max(1,(Math.abs(v)/mx)*42)}px" title="${v>0?'+':''}${v.toFixed(3)}E"></div><div class="bar-l">${lb[i]}</div></div>`).join('');
-}
-function renderC2(){
-  if(S.lat.length<2){$('chart2').innerHTML='<div style="height:48px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">暂无数据</div>';return}
-  const pts=S.lat.slice(-60),w=500,ht=48,p=2,mn=Math.min(...pts)-1,mx=Math.max(...pts)+1,xs=(w-p*2)/(pts.length-1);
-  const ty=v=>ht-p-((v-mn)/(mx-mn))*(ht-p*2);
-  const d=pts.map((v,i)=>`${i?'L':'M'}${p+i*xs},${ty(v)}`).join(' ');
-  const a=d+` L${p+(pts.length-1)*xs},${ht} L${p},${ht} Z`;
-  $('chart2').innerHTML=`<svg viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#64d2ff" stop-opacity=".2"/><stop offset="100%" stop-color="#64d2ff" stop-opacity="0"/></linearGradient></defs><path d="${a}" fill="url(#g1)"/><path d="${d}" fill="none" stroke="#64d2ff" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${p+(pts.length-1)*xs}" cy="${ty(pts[pts.length-1])}" r="2" fill="#64d2ff"/></svg>`;
-}
-renderC1();renderC2();
+// ─── Sparkline ───
+function renderC2(){if(S.lat.length<2){$('chart2').innerHTML='<div style="height:52px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">暂无数据</div>';return}const pts=S.lat.slice(-60),w=500,ht=52,p=2,mn=Math.min(...pts)-1,mx=Math.max(...pts)+1,xs=(w-p*2)/(pts.length-1);const ty=v=>ht-p-((v-mn)/(mx-mn))*(ht-p*2);const d=pts.map((v,i)=>`${i?'L':'M'}${p+i*xs},${ty(v)}`).join(' ');const a=d+` L${p+(pts.length-1)*xs},${ht} L${p},${ht} Z`;$('chart2').innerHTML=`<svg viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none"><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity=".2"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/></linearGradient></defs><path d="${a}" fill="url(#g1)"/><path d="${d}" fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${p+(pts.length-1)*xs}" cy="${ty(pts[pts.length-1])}" r="2.5" fill="#06b6d4"/></svg>`}
+renderC2();
 
 // ─── Latency probe ───
-async function probe(){
-  try{
-    const r=await fetch('/api/latency');if(!r.ok)return;const d=await r.json(),p=d.probes||{};
-    const rd=p.read||{},ar=p.read_arb1||{},sq=p.sequencer||{},lo=p.local_node||{};
-    const bk=lo.block||rd.block||ar.block;
-    if(bk)$('blk').textContent=`#${bk.toLocaleString()}`;
-    const src=lo.ms>0?lo:rd.ms>0?rd:ar,lbl=lo.ms>0?'IPC':rd.ms>0?'RPC':'arb1';
-    if(src&&src.ms>=0){h('pR',`${src.ms}<span class="u">ms</span>`);$('pRs').textContent=lbl;$('pRs').style.color=lc(src.ms,2,30)}
-    if(sq.ms>=0){h('pS',`${sq.ms}<span class="u">ms</span>`);$('pSs').textContent=sq.ms<5?'同region':'seq';$('pSs').style.color=lc(sq.ms,5,20)}
-    if(src&&src.ms>=0&&sq.ms>=0){const t=src.ms+2+.5+sq.ms;h('pT',`${t.toFixed(0)}<span class="u">ms</span>`);$('pTs').style.color=lc(t,8,20);$('pTs').textContent=t<=5?'极速':t<=10?'优秀':t<=20?'达标':'偏高'}
-    // Infra
-    if(lo.ms>0){$('nD').className='inf-d ok';$('nV').textContent=`已同步`}
-    if(rd.ms>=0)$('rpcV').textContent=`arb1 ${ar.ms||rd.ms}ms`;
-    if(sq.ms>=0)$('fV').textContent=`seq ${sq.ms}ms`;
-    // Sparkline
-    if(d.history?.sequencer?.length>=2){S.lat=d.history.sequencer.slice(-60);renderC2()}
-  }catch{}
-}
+async function probe(){try{const r=await fetch('/api/latency');if(!r.ok)return;const d=await r.json(),p=d.probes||{};const rd=p.read||{},ar=p.read_arb1||{},sq=p.sequencer||{},lo=p.local_node||{};const bk=lo.block||rd.block||ar.block;if(bk)$('blk').textContent=`#${bk.toLocaleString()}`;const src=lo.ms>0?lo:rd.ms>0?rd:ar,lbl=lo.ms>0?'IPC':rd.ms>0?'RPC':'arb1';if(src&&src.ms>=0){h('pR',`${src.ms}<span class="u">ms</span>`);$('pRs').textContent=lbl;$('pRs').style.color=lc(src.ms,2,30)}if(sq.ms>=0){h('pS',`${sq.ms}<span class="u">ms</span>`);$('pSs').style.color=lc(sq.ms,5,20);h('arbPS',`${sq.ms}<span class="u">ms</span>`);$('arbPSs').style.color=lc(sq.ms,5,20)}if(src&&src.ms>=0&&sq.ms>=0){const t=src.ms+2+.5+sq.ms;h('pT',`${t.toFixed(0)}<span class="u">ms</span>`);$('pTs').style.color=lc(t,8,20);$('pTs').textContent=t<=5?'极速':t<=10?'优秀':'偏高';const ta=src.ms+1+.4+sq.ms;h('arbPT',`${ta.toFixed(0)}<span class="u">ms</span>`);$('arbPTs').style.color=lc(ta,5,10);$('arbPTs').textContent=ta<=3.5?'极速':ta<=5?'优秀':'偏高'}if(lo.ms>0){$('nD').className='inf-d ok';$('nV').textContent='已同步'}if(rd.ms>=0)$('rpcV').textContent=`arb1 ${ar.ms||rd.ms}ms`;if(sq.ms>=0)$('fV').textContent=`seq ${sq.ms}ms`;if(d.history?.sequencer?.length>=2){S.lat=d.history.sequencer.slice(-60);renderC2()}}catch{}}
 probe();setInterval(probe,2000);
 
-// ─── Bot API ───
-async function pollBot(){
-  try{
-    const r=await fetch('/api/metrics');if(!r.ok)return;const d=await r.json();
-    if(d.total_profit_usd!==undefined){const n=d.total_profit_usd/3500;h('netP',`${n.toFixed(3)}<span class="u">ETH</span>`);$('netU').textContent=`$${d.total_profit_usd.toFixed(2)}`}
-    if(d.success_rate!==undefined)h('wr',`${d.success_rate.toFixed(1)}<span class="u">%</span>`);
-    if(d.uptime)h('uptime',d.uptime);
-    if(d.blocks_processed!==undefined)h('blocks',d.blocks_processed.toLocaleString());
-    if(d.positions_scanned!==undefined)h('scanned',d.positions_scanned.toLocaleString());
-    if(d.errors!==undefined){$('errs').textContent=`${d.errors} 错误`;$('errs').style.color=d.errors>0?'var(--r)':'var(--t3)'}
-    if(d.status==='running'){$('sDot').className='dot on';$('sText').textContent='运行中';$('bD').className='inf-d ok';$('bV').textContent='运行中'}
-  }catch{}
-}
+// ─── Bot metrics ───
+async function pollBot(){try{const r=await fetch('/api/metrics');if(!r.ok)return;const d=await r.json();
+  if(d.total_profit_usd!==undefined){h('liqNetP',`$${d.total_profit_usd.toFixed(2)}`);h('liqNetE',`${(d.total_profit_usd/3500).toFixed(4)} ETH`)}
+  if(d.total_liquidations!==undefined)h('liqCount',d.total_liquidations);
+  if(d.successful_liquidations!==undefined)$('liqSuccess').textContent=`${d.successful_liquidations} 成功`;
+  if(d.success_rate!==undefined)h('liqWr',`${d.success_rate.toFixed(1)}<span class="u">%</span>`);
+  if(d.avg_latency_ms!==undefined&&d.avg_latency_ms>0)h('liqLat',`${d.avg_latency_ms.toFixed(1)}<span class="u">ms</span>`);
+  if(d.uptime){h('liqUptime',d.uptime);h('arbUptime',d.uptime)}
+  if(d.blocks_processed!==undefined)h('liqBlocks',d.blocks_processed.toLocaleString());
+  if(d.positions_scanned!==undefined)$('liqScanned').textContent=`${d.positions_scanned.toLocaleString()} 次扫描`;
+  if(d.errors!==undefined){$('liqErrs').textContent=`${d.errors} 错误`;$('liqErrs').style.color=d.errors>0?'var(--r)':'var(--t3)';$('arbErrs').textContent=`${d.errors} 错误`;$('arbErrs').style.color=d.errors>0?'var(--r)':'var(--t3)'}
+  if(d.status==='running'){$('sDot').className='dot on';$('sText').textContent='运行中';$('bD').className='inf-d ok';$('bV').textContent='运行中'}
+  const aa=d.arb_attempts||0,as2=d.arb_successes||0,ap=d.arb_profit_usd||0;
+  h('arbNetP',`$${ap.toFixed(2)}`);$('arbNetP').style.color=ap>0?'var(--g)':ap<0?'var(--r)':'var(--t)';
+  h('arbNetE',`${(ap/3500).toFixed(4)} ETH`);
+  h('arbAttempts',`${aa} / ${as2}`);
+  $('arbSuccLabel').textContent=aa>0?`成功率 ${((as2/aa)*100).toFixed(1)}%`:'--';
+  h('arbWr',aa>0?`${((as2/aa)*100).toFixed(1)}<span class="u">%</span>`:'--<span class="u">%</span>');
+}catch{}}
 pollBot();setInterval(pollBot,2000);
 
-// ─── Chain data ───
-async function pollChain(){
-  try{
-    const r=await fetch('/api/chain');if(!r.ok)return;
-    S.chain=await r.json();
-    // Update AAVE stats
-    const near=S.chain.near_liquidation||[];
-    const mkt=S.chain.market_liquidations||[];
-    const bots=S.chain.competitors||[];
-    $('aaveDanger').textContent=near.length;
-    $('aaveDanger').style.color=near.length>0?'var(--o)':'var(--t)';
-    $('aaveMkt').textContent=`${mkt.length} 笔`;
-    $('aaveBots').textContent=`${bots.length} 个`;
-    renderNear();renderBots();renderMkt();
-  }catch{}
-}
-pollChain();setInterval(pollChain,10000);
+// ─── Arb dashboard data ───
+async function pollArb(){try{const r=await fetch('/api/arb');if(!r.ok)return;const d=await r.json();
+  S.arb=d;
+  h('arbScans',(d.scans||0).toLocaleString());
+  $('arbOpps').textContent=`${(d.opportunities||0).toLocaleString()} 个机会`;
+  renderArbPairs();renderSpreadChart();renderArbEvents();
+}catch{}}
+pollArb();setInterval(pollArb,1500);
 
-// ─── P&L ───
-function updatePnl(){
-  const t=S.trades;if(!t.length)return;
-  let gp=0,tg=0,w=0,l=0;
-  t.forEach(x=>{const p=parseFloat(x.profit)||0,g=parseFloat(x.gas)||0;p>0?(gp+=p,w++):(gp+=p,l++);tg+=g});
-  const n=gp-tg;
-  h('netP',`${n>=0?'':'-'}${Math.abs(n).toFixed(3)}<span class="u">ETH</span>`);
-  $('netP').className='m-v'+(n>=0?' pos':' neg');
-  $('netU').textContent=`$${(n*3500).toFixed(2)}`;
-  h('dayP',`${n>=0?'+':''}${n.toFixed(3)}<span class="u">ETH</span>`);
-  $('dayP').className='m-v'+(n>=0?' pos':' neg');
-  $('dayN').textContent=`${t.length} 笔`;
-  h('gasP',`${tg.toFixed(4)}<span class="u">ETH</span>`);
-  $('gasA').textContent=t.length?`均 ${(tg/t.length).toFixed(4)}/笔`:'—';
-  const tot=w+l,rate=tot?((w/tot)*100).toFixed(1):'—';
-  h('wr',`${rate}<span class="u">%</span>`);$('wrd').textContent=`${w}W / ${l}L`;
-}
-updatePnl();
+// ─── Chain data ───
+async function pollChain(){try{const r=await fetch('/api/chain');if(!r.ok)return;S.chain=await r.json();const near=S.chain.near_liquidation||[],mkt=S.chain.market_liquidations||[],bots=S.chain.competitors||[];$('aaveDanger').textContent=near.length;$('aaveDanger').style.color=near.length>0?'var(--o)':'var(--t)';$('aaveMkt').textContent=`${mkt.length} 笔`;$('aaveBots').textContent=`${bots.length} 个`;renderNear();renderBots();renderMkt()}catch{}}
+pollChain();setInterval(pollChain,10000);
 </script>
 </body>
 </html>

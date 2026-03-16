@@ -9,22 +9,25 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
+use crate::arbitrage::dashboard::ArbDashboard;
 use crate::utils::metrics::Metrics;
 
 /// Shared state accessible by all HTTP handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub metrics: Metrics,
+    pub arb_dashboard: ArbDashboard,
 }
 
 /// Start the dashboard web server on the given port.
-pub async fn start_dashboard(metrics: Metrics, port: u16) -> eyre::Result<()> {
-    let state = Arc::new(AppState { metrics });
+pub async fn start_dashboard(metrics: Metrics, arb_dashboard: ArbDashboard, port: u16) -> eyre::Result<()> {
+    let state = Arc::new(AppState { metrics, arb_dashboard });
 
     let app = Router::new()
         .route("/", get(serve_dashboard))
         .route("/api/metrics", get(api_metrics))
         .route("/api/health", get(api_health))
+        .route("/api/arb", get(api_arb))
         .route("/api/latency", get(api_latency_stub))
         .route("/api/chain", get(api_chain_stub))
         .layer(CorsLayer::permissive())
@@ -53,6 +56,11 @@ async fn api_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// Simple health check endpoint.
 async fn api_health() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+/// Return current arbitrage dashboard state.
+async fn api_arb(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(state.arb_dashboard.to_json())
 }
 
 /// Stub for /api/latency — the Python dashboard server provides the real implementation.

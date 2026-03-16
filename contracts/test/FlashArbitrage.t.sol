@@ -173,6 +173,39 @@ contract FlashArbitrageTest is Test {
         flashArb.executeArbitrage(params);
     }
 
+    function test_executeArbitrage_revertsForZeroAmount() public {
+        FlashArbitrage.ArbParams memory params;
+        params.poolA = address(poolA);
+        params.poolB = address(poolB);
+        params.amountIn = 0;
+
+        vm.expectRevert(FlashArbitrage.InvalidAmount.selector);
+        flashArb.executeArbitrage(params);
+    }
+
+    function test_executeArbitrage_revertsForSamePool() public {
+        FlashArbitrage.ArbParams memory params;
+        params.poolA = address(poolA);
+        params.poolB = address(poolA);
+        params.amountIn = 1e18;
+
+        vm.expectRevert(FlashArbitrage.InvalidPoolPair.selector);
+        flashArb.executeArbitrage(params);
+    }
+
+    function test_executeArbitrage_revertsForMismatchedPoolTokens() public {
+        MockERC20Arb tokenC = new MockERC20Arb("Token C", "C", 18);
+        MockUniV3Pool badPool = new MockUniV3Pool(t0, address(tokenC), 500);
+
+        FlashArbitrage.ArbParams memory params;
+        params.poolA = address(poolA);
+        params.poolB = address(badPool);
+        params.amountIn = 1e18;
+
+        vm.expectRevert(FlashArbitrage.InvalidPoolPair.selector);
+        flashArb.executeArbitrage(params);
+    }
+
     function test_emergencyWithdraw_onlyOwner() public {
         vm.prank(attacker);
         vm.expectRevert(FlashArbitrage.OnlyOwner.selector);

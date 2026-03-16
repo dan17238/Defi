@@ -30,6 +30,11 @@ impl ArbitrageDetector {
         }
     }
 
+    /// Access the configured pairs (for dashboard snapshots).
+    pub fn pairs(&self) -> &[PoolPair] {
+        &self.pairs
+    }
+
     /// Scan all configured pairs for arbitrage opportunities.
     pub fn scan_all_pairs(&self, cache: &PoolStateCache) -> Vec<ArbitrageOpportunity> {
         let mut opportunities = Vec::new();
@@ -127,7 +132,7 @@ impl ArbitrageDetector {
 
 /// Convert sqrtPriceX96 (U256) to f64 for comparison.
 /// sqrtPriceX96 = sqrt(price) * 2^96
-fn sqrt_price_to_f64(sqrt_price: &U256) -> f64 {
+pub fn sqrt_price_to_f64(sqrt_price: &U256) -> f64 {
     // Convert U256 to f64. For typical UniV3 prices, the value fits
     // within f64 precision (sqrtPriceX96 is typically ~1e28 to ~1e30).
     let limbs = sqrt_price.as_limbs();

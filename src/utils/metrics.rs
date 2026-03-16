@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
@@ -25,7 +25,7 @@ struct MetricsInner {
     // Arbitrage metrics
     arb_count: AtomicU64,
     arb_successful_count: AtomicU64,
-    arb_profit_usd_micros: AtomicU64,
+    arb_profit_usd_micros: AtomicI64,
     started_at: Instant,
 }
 
@@ -44,7 +44,7 @@ impl Metrics {
                 latency_samples: AtomicU64::new(0),
                 arb_count: AtomicU64::new(0),
                 arb_successful_count: AtomicU64::new(0),
-                arb_profit_usd_micros: AtomicU64::new(0),
+                arb_profit_usd_micros: AtomicI64::new(0),
                 started_at: Instant::now(),
             }),
         }
@@ -89,15 +89,17 @@ impl Metrics {
             .fetch_add(count, Ordering::Relaxed);
     }
 
-    /// Record an arbitrage attempt.
-    pub fn record_arbitrage(&self, profit_usd: f64, success: bool) {
+    /// Record an arbitrage submission attempt.
+    pub fn record_arbitrage_attempt(&self) {
         self.inner.arb_count.fetch_add(1, Ordering::Relaxed);
-        if success {
-            self.inner
-                .arb_successful_count
-                .fetch_add(1, Ordering::Relaxed);
-        }
-        let micros = (profit_usd * 1_000_000.0) as u64;
+    }
+
+    /// Record a confirmed successful arbitrage and its realized profit.
+    pub fn record_arbitrage_success(&self, profit_usd: f64) {
+        self.inner
+            .arb_successful_count
+            .fetch_add(1, Ordering::Relaxed);
+        let micros = (profit_usd * 1_000_000.0).round() as i64;
         self.inner
             .arb_profit_usd_micros
             .fetch_add(micros, Ordering::Relaxed);
@@ -112,6 +114,11 @@ impl Metrics {
     pub fn arb_profit_usd(&self) -> f64 {
         let micros = self.inner.arb_profit_usd_micros.load(Ordering::Relaxed);
         micros as f64 / 1_000_000.0
+    }
+
+    /// Get the total confirmed arbitrage success count.
+    pub fn arb_successful_count(&self) -> u64 {
+        self.inner.arb_successful_count.load(Ordering::Relaxed)
     }
 
     /// Get the current liquidation count.
@@ -146,6 +153,7 @@ impl Metrics {
             liquidations = self.liquidation_count(),
             total_profit_usd = self.total_profit_usd(),
             arb_attempts = self.arb_count(),
+            arb_successes = self.arb_successful_count(),
             arb_profit_usd = self.arb_profit_usd(),
             errors = self.error_count(),
             blocks = self.blocks_processed(),
@@ -197,6 +205,7 @@ impl Metrics {
             "blocks_processed": self.blocks_processed(),
             "positions_scanned": self.positions_scanned(),
             "arb_attempts": self.arb_count(),
+            "arb_successes": self.arb_successful_count(),
             "arb_profit_usd": self.arb_profit_usd(),
             "uptime": uptime_str,
             "uptime_secs": uptime
