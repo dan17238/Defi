@@ -237,26 +237,11 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                 // If we found the real profit from the event, convert to USD and use it.
                 // Otherwise, fall back to the rough estimate from the opportunity.
                 let profit_usd = if found_event {
-                    // Convert token profit to USD.
-                    // For stablecoins (USDC, USDT) with 6 decimals: profit / 1e6.
-                    // For WETH (18 decimals): profit / 1e18 * eth_price.
-                    // For WBTC (8 decimals): profit / 1e8 * btc_price (use ~60k as fallback).
-                    // Heuristic: detect by debt asset address.
-                    let debt = opportunity.debt_asset;
-                    let profit_f64 = if debt == flash_loan::tokens::WETH {
-                        actual_profit_tokens.saturating_to::<u128>() as f64 / 1e18 * eth_price
-                    } else if debt == flash_loan::tokens::WBTC {
-                        actual_profit_tokens.saturating_to::<u128>() as f64 / 1e8 * 60_000.0
-                    } else {
-                        // Stablecoins (USDC, USDC.e, USDT, DAI) — 6 or 18 decimals.
-                        // USDC and USDT use 6 decimals; DAI uses 18.
-                        if debt == flash_loan::tokens::DAI {
-                            actual_profit_tokens.saturating_to::<u128>() as f64 / 1e18
-                        } else {
-                            // USDC, USDC.e, USDT — 6 decimals
-                            actual_profit_tokens.saturating_to::<u128>() as f64 / 1e6
-                        }
-                    };
+                    // Convert token profit to USD using centralized token registry.
+                    let profit_f64 = flash_loan::tokens::token_value_usd(
+                        actual_profit_tokens,
+                        opportunity.debt_asset,
+                    );
                     profit_f64 - gas_cost_usd
                 } else {
                     // Fall back to rough estimate from opportunity data

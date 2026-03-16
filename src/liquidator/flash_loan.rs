@@ -72,7 +72,7 @@ pub const DEX_CAMELOT: u8 = 1;
 
 /// Well-known token addresses on Arbitrum.
 pub mod tokens {
-    use alloy::primitives::Address;
+    use alloy::primitives::{address, Address};
 
     pub const WETH: Address = address!("82aF49447D8a07e3bd95BD0d56f35241523fBab1");
     pub const USDC: Address = address!("af88d065e77c8cC2239327C5EDb3A432268e5831");
@@ -81,8 +81,51 @@ pub mod tokens {
     pub const WBTC: Address = address!("2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f");
     pub const ARB: Address = address!("912CE59144191C1204E64559FE8253a0e49E6548");
     pub const DAI: Address = address!("DA10009cBd5D07dd0CeCc66161FC93D7c9000da1");
+    pub const LINK: Address = address!("f97f4df75117a78c1A5a0DBb814Af92458539FB4");
+    pub const GMX: Address = address!("fc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a");
+    pub const WSTETH: Address = address!("5979D7b546E38E9Ab5011956dEa6F53c2BA11622");
+    pub const MAGIC: Address = address!("539bdE0d7Dbd336b79148AA742883198BBF60342");
+    pub const FRAX: Address = address!("17FC002b466eEc40DaE837Fc4bE5c67993ddBd6F");
 
-    use alloy::primitives::address;
+    /// Token info: (decimals, approximate USD price).
+    /// Price is a rough estimate used for comparison/sorting, not for exact profit.
+    /// ETH price is fetched from Chainlink and cached; others use static estimates.
+    pub fn token_info(addr: Address) -> (u8, f64) {
+        let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
+            .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+        let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
+
+        match addr {
+            a if a == WETH => (18, eth_price),
+            a if a == WSTETH => (18, eth_price * 1.05), // ~5% premium over ETH
+            a if a == WBTC => (8, 95_000.0),
+            a if a == USDC => (6, 1.0),
+            a if a == USDC_E => (6, 1.0),
+            a if a == USDT => (6, 1.0),
+            a if a == DAI => (18, 1.0),
+            a if a == FRAX => (18, 1.0),
+            a if a == ARB => (18, 1.1),
+            a if a == LINK => (18, 18.0),
+            a if a == GMX => (18, 30.0),
+            a if a == MAGIC => (18, 0.5),
+            _ => (18, 1.0), // unknown 18-decimal token, assume $1 (conservative)
+        }
+    }
+
+    /// Convert raw token amount to approximate USD value.
+    pub fn token_value_usd(amount: alloy::primitives::U256, addr: Address) -> f64 {
+        let (decimals, price) = token_info(addr);
+        let raw = amount.saturating_to::<u128>() as f64;
+        (raw / 10f64.powi(decimals as i32)) * price
+    }
+
+    /// How many raw token units equal ~$1.
+    pub fn one_dollar_in_tokens(addr: Address) -> alloy::primitives::U256 {
+        let (decimals, price) = token_info(addr);
+        let price = if price > 0.0 { price } else { 1.0 };
+        let units = 10f64.powi(decimals as i32) / price;
+        alloy::primitives::U256::from(units as u128)
+    }
 }
 
 /// Determine the best swap fee tier for a collateral→debt pair.

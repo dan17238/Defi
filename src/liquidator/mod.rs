@@ -139,33 +139,16 @@ where
         // 1. Flash loan premium (0.09% for non-whitelisted borrowers)
         let flash_loan_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000);
 
-        // 2. Detect debt token decimals and compute ~$1 worth in token units.
-        let debt_decimals = match opportunity.debt_asset {
-            t if t == flash_loan::tokens::WETH => 18u8,
-            t if t == flash_loan::tokens::WBTC => 8u8,
-            t if t == flash_loan::tokens::DAI => 18u8,
-            _ => 6u8, // stablecoins (USDC, USDC.e, USDT)
-        };
-
-        let one_dollar_in_tokens = match debt_decimals {
-            18 => {
-                // For WETH: $1 / eth_price * 1e18
-                let eth_price = crate::protocols::radiant::CACHED_ETH_PRICE_CENTS
-                    .load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
-                let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
-                U256::from((1e18 / eth_price) as u128)
-            }
-            8 => {
-                // For WBTC: $1 / $95000 * 1e8
-                U256::from(1052u64)
-            }
-            _ => U256::from(1_000_000u64), // 6 decimals, $1
-        };
+        // 2. Compute ~$1 worth in debt token units using centralized token registry.
+        //    This correctly handles all tokens (WETH, WBTC, DAI, ARB, LINK, stablecoins).
+        let one_dollar = flash_loan::tokens::one_dollar_in_tokens(opportunity.debt_asset);
 
         // 2b. Gas buffer: ~$1 worth of the debt token
-        let gas_buffer = one_dollar_in_tokens;
-        // 3. Config minimum profit threshold converted to token terms.
-        let config_min = one_dollar_in_tokens * U256::from(self.config.min_profit_usd as u64);
+        let gas_buffer = one_dollar;
+        // 3. Config minimum profit threshold in token terms.
+        //    Multiply by 10 then divide by 10 to preserve one decimal (e.g. 0.5 -> 5/10).
+        let config_min_x10 = (self.config.min_profit_usd * 10.0) as u64;
+        let config_min = one_dollar * U256::from(config_min_x10) / U256::from(10u64);
         let min_profit = flash_loan_premium + gas_buffer + config_min;
 
         let calldata = flash_loan::encode_flash_liquidation(

@@ -13,21 +13,10 @@ use crate::provider;
 use crate::state::position_tracker::PositionTracker;
 use crate::utils::multicall::Multicall;
 
-/// Convert a raw token amount to an approximate USD value.
-///
-/// Uses the cached ETH price and a rough BTC price estimate to normalize
-/// amounts across tokens with different decimals.
+/// Convert a raw token amount to approximate USD value.
+/// Delegates to centralized token registry in flash_loan::tokens.
 fn token_value_usd(amount: U256, token: Address) -> f64 {
-    let raw = amount.saturating_to::<u128>() as f64;
-    let eth_price = CACHED_ETH_PRICE_CENTS
-        .load(Ordering::Relaxed) as f64 / 100.0;
-    let eth_price = if eth_price > 100.0 { eth_price } else { 3500.0 };
-    match token {
-        t if t == tokens::WETH => raw / 1e18 * eth_price,
-        t if t == tokens::WBTC => raw / 1e8 * 95_000.0,
-        t if t == tokens::DAI => raw / 1e18,
-        _ => raw / 1e6, // assume stablecoin with 6 decimals
-    }
+    tokens::token_value_usd(amount, token)
 }
 
 /// Cached ETH price in USD cents (e.g., 350000 = $3500.00).
