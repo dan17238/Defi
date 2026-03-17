@@ -336,8 +336,11 @@ async fn main() -> Result<()> {
         let metrics = metrics.clone();
         let arb_dashboard = arb_dashboard.clone();
         let port = config.monitoring.dashboard_port;
+        let python_dashboard_port = config.monitoring.python_dashboard_port;
         tokio::spawn(async move {
-            if let Err(e) = web::start_dashboard(metrics, arb_dashboard, port).await {
+            if let Err(e) =
+                web::start_dashboard(metrics, arb_dashboard, port, python_dashboard_port).await
+            {
                 error!(error = %e, "Dashboard server failed");
             }
         });
@@ -470,7 +473,7 @@ async fn run_protocol_monitor<Proto, R, E>(
     R: Provider + Clone + Send + Sync + 'static,
     E: Provider + Clone + Send + Sync + 'static,
 {
-    const FEED_RESCAN_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+    const FEED_RESCAN_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(1);
 
     // Run initial borrower discovery before entering the scan loop (Fix 6).
     info!(
@@ -492,13 +495,14 @@ async fn run_protocol_monitor<Proto, R, E>(
     // Periodic borrower re-discovery interval (every 10 minutes) to catch new
     // borrowers that appeared after the initial startup scan.
     let mut discovery_interval = tokio::time::interval(std::time::Duration::from_secs(600));
+    discovery_interval.tick().await;
     let mut last_feed_scan = tokio::time::Instant::now() - FEED_RESCAN_DEBOUNCE;
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
                 // Read latest block from shared state (Fix 5)
-                let block_number = latest_block.load(Ordering::Acquire);
+                let block_number = Some(latest_block.load(Ordering::Acquire));
 
                 match protocol.get_liquidatable_positions(block_number).await {
                     Ok(opportunities) => {
@@ -509,8 +513,8 @@ async fn run_protocol_monitor<Proto, R, E>(
                             info!(
                                 protocol = protocol.name(),
                                 count = opportunities.len(),
-                                "Found liquidation opportunities"
-                            );
+                            "Found liquidation opportunities"
+                        );
 
                             if let Err(e) = liquidator.process_batch(opportunities).await {
                                 error!(
@@ -558,9 +562,10 @@ async fn run_protocol_monitor<Proto, R, E>(
                     }
                 }
 
-                let block_number = latest_block.load(Ordering::Acquire);
-
-                match protocol.get_liquidatable_positions(block_number).await {
+                // Feed-triggered rescans intentionally query the provider's
+                // latest state instead of pinning to the last confirmed block.
+                // This preserves the latency advantage of the sequencer feed.
+                match protocol.get_liquidatable_positions(None).await {
                     Ok(opportunities) => {
                         metrics.record_positions_scanned(1);
 
@@ -593,7 +598,7 @@ async fn run_protocol_monitor<Proto, R, E>(
             }
             // Periodic borrower re-discovery to catch new borrowers
             _ = discovery_interval.tick() => {
-                info!(protocol = protocol.name(), "Running periodic borrower re-discovery");
+                info!(protocol = protocol.name(), "Running periodic incremental borrower discovery");
                 if let Err(e) = protocol.discover_borrowers().await {
                     warn!(
                         protocol = protocol.name(),

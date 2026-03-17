@@ -7,6 +7,8 @@ use alloy::sol;
 use eyre::{Context, Result};
 use tracing::{debug, info, warn};
 
+use dashmap::{DashMap, DashSet};
+
 use crate::liquidator::flash_loan::tokens;
 use crate::protocols::{LiquidationOpportunity, Protocol};
 use crate::provider;
@@ -71,6 +73,23 @@ sol! {
                 bool usageAsCollateralEnabled
             );
 
+        /// Get reserve configuration data including liquidation bonus.
+        function getReserveConfigurationData(address asset)
+            external
+            view
+            returns (
+                uint256 decimals,
+                uint256 ltv,
+                uint256 liquidationThreshold,
+                uint256 liquidationBonus,
+                uint256 reserveFactor,
+                bool usageAsCollateralEnabled,
+                bool borrowingEnabled,
+                bool stableBorrowRateEnabled,
+                bool isActive,
+                bool isFrozen
+            );
+
         struct TokenData {
             string symbol;
             address tokenAddress;
@@ -82,6 +101,11 @@ sol! {
     interface IChainlinkAggregator {
         function latestAnswer() external view returns (int256);
         function decimals() external view returns (uint8);
+    }
+
+    #[sol(rpc)]
+    interface IAssetOracle {
+        function getSourceOfAsset(address asset) external view returns (address);
     }
 }
 
@@ -97,10 +121,15 @@ pub struct RadiantProtocol<P> {
     position_tracker: PositionTracker,
     multicall_batch_size: usize,
     discovery_start_block: AtomicU64,
+    next_discovery_block: AtomicU64,
+    rescan_targets: DashSet<Address>,
+    liq_bonus_cache: DashMap<Address, u64>,
 }
 
 /// Chainlink ETH/USD price feed on Arbitrum
 const CHAINLINK_ETH_USD: &str = "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612";
+/// Radiant oracle on Arbitrum. Used to discover reserve price-feed sources.
+const RADIANT_AAVE_ORACLE: &str = "0xC0cE5De939aaD880b0bdDcf9aB5750a53EDa454b";
 
 impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     pub fn new(
@@ -110,6 +139,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         min_profit_usd: f64,
         multicall_batch_size: usize,
     ) -> Self {
+        let rescan_targets = DashSet::new();
+        rescan_targets.insert(pool_address);
+
         Self {
             provider,
             pool_address,
@@ -118,6 +150,48 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             position_tracker: PositionTracker::new(),
             multicall_batch_size,
             discovery_start_block: AtomicU64::new(u64::MAX),
+            next_discovery_block: AtomicU64::new(u64::MAX),
+            rescan_targets,
+            liq_bonus_cache: DashMap::new(),
+        }
+    }
+
+    /// Read the on-chain liquidation bonus for a collateral asset.
+    /// Returns bonus in bps (e.g. 500.0 for 5%). Cached after first read.
+    async fn get_liquidation_bonus(&self, collateral: Address, block_number: Option<u64>) -> f64 {
+        if let Some(cached) = self.liq_bonus_cache.get(&collateral) {
+            let raw = *cached;
+            return if raw > 10_000 {
+                (raw - 10_000) as f64
+            } else {
+                500.0
+            };
+        }
+
+        let data_provider = IRadiantDataProvider::new(self.data_provider_address, &self.provider);
+        let call = data_provider.getReserveConfigurationData(collateral);
+        let result = match block_number {
+            Some(block) => call.block(block.into()).call().await,
+            None => call.call().await,
+        };
+        match result {
+            Ok(config) => {
+                let raw = config.liquidationBonus.saturating_to::<u64>();
+                self.liq_bonus_cache.insert(collateral, raw);
+                if raw > 10_000 {
+                    (raw - 10_000) as f64
+                } else {
+                    500.0
+                }
+            }
+            Err(e) => {
+                debug!(
+                    collateral = %collateral,
+                    error = %e,
+                    "Failed to read Radiant liquidation bonus, using 5% default"
+                );
+                500.0
+            }
         }
     }
 
@@ -200,6 +274,51 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         Ok(start_block)
     }
 
+    async fn next_discovery_block(&self) -> Result<u64> {
+        let cached = self.next_discovery_block.load(Ordering::Acquire);
+        if cached != u64::MAX {
+            return Ok(cached);
+        }
+
+        let start_block = self.discovery_start_block().await?;
+        self.next_discovery_block
+            .store(start_block, Ordering::Release);
+        Ok(start_block)
+    }
+
+    async fn refresh_rescan_targets(&self, block_number: Option<u64>) {
+        if self.rescan_targets.len() > 1 {
+            return;
+        }
+
+        let oracle_address: Address = match RADIANT_AAVE_ORACLE.parse() {
+            Ok(addr) => addr,
+            Err(_) => return,
+        };
+        self.rescan_targets.insert(oracle_address);
+
+        let reserves = match self.fetch_reserves_list(block_number).await {
+            Ok(reserves) => reserves,
+            Err(e) => {
+                debug!(error = %e, "Failed to fetch Radiant reserves for feed targets");
+                return;
+            }
+        };
+
+        let oracle = IAssetOracle::new(oracle_address, &self.provider);
+        for reserve in reserves {
+            match oracle.getSourceOfAsset(reserve).call().await {
+                Ok(source) if source != Address::ZERO => {
+                    self.rescan_targets.insert(source);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!(reserve = %reserve, error = %e, "Failed to fetch Radiant oracle source");
+                }
+            }
+        }
+    }
+
     /// Batch-query health factors for tracked borrowers using Multicall3.
     ///
     /// Returns (user_address, health_factor, total_debt_eth) tuples.
@@ -207,7 +326,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     async fn batch_query_health_factors(
         &self,
         users: &[Address],
-        block_number: u64,
+        block_number: Option<u64>,
     ) -> Result<Vec<(Address, U256, U256)>> {
         if users.is_empty() {
             return Ok(Vec::new());
@@ -228,9 +347,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                 })
                 .collect();
 
-            let raw_results = multicall
-                .aggregate3_at_block(calls, Some(block_number))
-                .await?;
+            let raw_results = multicall.aggregate3_at_block(calls, block_number).await?;
 
             for (i, raw) in raw_results.iter().enumerate() {
                 if raw.success {
@@ -261,9 +378,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         user: Address,
         health_factor: U256,
         _total_debt_eth: U256,
-        block_number: u64,
+        block_number: Option<u64>,
     ) -> Result<Option<LiquidationOpportunity>> {
-        let reserves = self.fetch_reserves_list(Some(block_number)).await?;
+        let reserves = self.fetch_reserves_list(block_number).await?;
         let data_provider = IRadiantDataProvider::new(self.data_provider_address, &self.provider);
 
         let mut best_collateral = Address::ZERO;
@@ -273,11 +390,11 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         let mut max_debt_raw = U256::ZERO;
 
         for reserve in &reserves {
-            let user_data = data_provider
-                .getUserReserveData(*reserve, user)
-                .block(block_number.into())
-                .call()
-                .await;
+            let call = data_provider.getUserReserveData(*reserve, user);
+            let user_data = match block_number {
+                Some(block) => call.block(block.into()).call().await,
+                None => call.call().await,
+            };
 
             let user_data = match user_data {
                 Ok(d) => d,
@@ -334,13 +451,24 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             return Ok(None);
         }
 
-        // Radiant (AAVE v2 fork) close factor is 50%.
-        let close_factor = 0.5;
-        let debt_to_cover = max_debt_raw / U256::from(2);
+        // Radiant (AAVE v2 fork) close factor is 50%, but 100% when HF < 0.95e18.
+        let close_factor_threshold = U256::from(950_000_000_000_000_000u64); // 0.95e18
+        let close_factor = if health_factor < close_factor_threshold {
+            1.0
+        } else {
+            0.5
+        };
+        let debt_to_cover = if health_factor < close_factor_threshold {
+            max_debt_raw
+        } else {
+            max_debt_raw / U256::from(2)
+        };
 
-        // Profit estimate using the specific reserve's debt value (not the whole account).
-        let estimated_bonus_bps: f64 = 500.0;
-        let estimated_profit_usd = max_debt_usd * close_factor * (estimated_bonus_bps / 10_000.0);
+        // Read liquidation bonus from on-chain (cached, rarely changes).
+        let bonus_bps = self
+            .get_liquidation_bonus(best_collateral, block_number)
+            .await;
+        let estimated_profit_usd = max_debt_usd * close_factor * (bonus_bps / 10_000.0);
 
         if estimated_profit_usd < self.min_profit_usd {
             debug!(
@@ -373,10 +501,17 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                 .parse()
                 .wrap_err("Invalid Radiant borrow event topic")?;
 
-        // Scan the last 2,400,000 blocks (~7 days on Arbitrum at ~250ms blocks)
-        // to capture a broader set of active borrowers.
         let latest = provider::get_latest_block_number(&self.provider).await?;
-        let from_block = self.discovery_start_block().await?;
+        let from_block = self.next_discovery_block().await?;
+        if from_block > latest {
+            debug!(
+                protocol = "radiant",
+                next_block = from_block,
+                latest,
+                "Radiant borrower discovery already up to date"
+            );
+            return Ok(());
+        }
 
         info!(
             protocol = "radiant",
@@ -389,6 +524,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         let batch_size: u64 = 100_000;
         let mut logs = Vec::new();
         let mut batch_start = from_block;
+        let mut next_block = from_block;
         while batch_start <= latest {
             let batch_end = (batch_start + batch_size - 1).min(latest);
             let filter = Filter::new()
@@ -398,19 +534,26 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                 .to_block(batch_end);
 
             match self.provider.get_logs(&filter).await {
-                Ok(batch_logs) => logs.extend(batch_logs),
+                Ok(batch_logs) => {
+                    logs.extend(batch_logs);
+                    next_block = batch_end.saturating_add(1);
+                }
                 Err(e) => {
                     warn!(
                         protocol = "radiant",
                         from = batch_start,
                         to = batch_end,
                         error = %e,
-                        "Failed to fetch Borrow logs for batch, continuing"
+                        "Failed to fetch Borrow logs for batch, stopping incremental replay"
                     );
+                    break;
                 }
             }
             batch_start = batch_end + 1;
         }
+
+        self.next_discovery_block
+            .store(next_block, Ordering::Release);
 
         let mut count = 0usize;
         for log in &logs {
@@ -441,13 +584,20 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
 
     async fn get_liquidatable_positions(
         &self,
-        block_number: u64,
+        block_number: Option<u64>,
     ) -> Result<Vec<LiquidationOpportunity>> {
-        info!(
-            protocol = self.name(),
-            block = block_number,
-            "Scanning Radiant for liquidatable positions"
-        );
+        if let Some(block_number) = block_number {
+            info!(
+                protocol = self.name(),
+                block = block_number,
+                "Scanning Radiant for liquidatable positions"
+            );
+        } else {
+            info!(
+                protocol = self.name(),
+                "Scanning Radiant for liquidatable positions at latest provider state"
+            );
+        }
 
         // Refresh ETH price from Chainlink before scanning
         self.refresh_eth_price().await;
@@ -504,7 +654,6 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
 
         info!(
             protocol = self.name(),
-            block = block_number,
             found = opportunities.len(),
             "Radiant scan complete"
         );
@@ -513,10 +662,11 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
     }
 
     async fn discover_borrowers(&self) -> Result<()> {
+        self.refresh_rescan_targets(None).await;
         self.discover_borrowers_from_events().await
     }
 
     fn should_rescan_on_event(&self, event: &crate::sequencer_feed::SequencerEvent) -> bool {
-        matches!(event.tx_to, Some(target) if target == self.pool_address)
+        matches!(event.tx_to, Some(target) if self.rescan_targets.contains(&target))
     }
 }

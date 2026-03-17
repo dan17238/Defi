@@ -3,13 +3,54 @@
 
 import json, time, threading, http.client, ssl, socketserver, os
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse
 import chain_data
+import tomllib
+
+def _repo_root():
+    return Path(__file__).resolve().parent.parent
+
+
+def _load_settings():
+    config_path = Path(os.environ.get("APP_CONFIG_PATH", _repo_root() / "config/default.toml"))
+    try:
+        with config_path.open("rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+
+def _parse_target(url, default):
+    if not url:
+        return default
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return default
+    use_ssl = parsed.scheme == "https"
+    port = parsed.port or (443 if use_ssl else 80)
+    path = parsed.path or "/"
+    return (parsed.hostname, port, path, use_ssl)
+
+
+SETTINGS = _load_settings()
+MONITORING = SETTINGS.get("monitoring", {})
+RPC = SETTINGS.get("rpc", {})
+SEQUENCER = SETTINGS.get("sequencer", {})
 
 TARGETS = {
-    'read': ('arb1.arbitrum.io', 443, '/rpc'),
-    'read_arb1': ('arb1.arbitrum.io', 443, '/rpc'),
-    'sequencer': ('arb1-sequencer.arbitrum.io', 443, '/rpc'),
-    'local_node': ('127.0.0.1', 8547, '/'),
+    'read': _parse_target(RPC.get('http_url'), ('arb1.arbitrum.io', 443, '/rpc', True)),
+    'read_arb1': ('arb1.arbitrum.io', 443, '/rpc', True),
+    'sequencer': _parse_target(SEQUENCER.get('rpc_url'), ('arb1-sequencer.arbitrum.io', 443, '/rpc', True)),
+    'local_node': _parse_target(
+        os.environ.get('LOCAL_NODE_RPC_URL')
+        or (
+            RPC.get('http_url')
+            if urlparse(RPC.get('http_url', '')).hostname in ('127.0.0.1', 'localhost')
+            else None
+        ),
+        ('127.0.0.1', 8547, '/', False),
+    ),
 }
 
 RPC_BODY = json.dumps({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}).encode()
@@ -24,7 +65,11 @@ latest = {
 history = {'read': [], 'sequencer': [], 'total': []}
 MAX_HISTORY = 120
 conns = {}
-BOT_API_BASE = os.environ.get('BOT_API_BASE', 'http://127.0.0.1:3001')
+BOT_API_BASE = os.environ.get(
+    'BOT_API_BASE',
+    f"http://127.0.0.1:{MONITORING.get('dashboard_port', 3001)}",
+)
+SERVER_PORT = int(os.environ.get('PY_DASHBOARD_PORT', MONITORING.get('python_dashboard_port', 3000)))
 
 # Read HTML once at startup
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html')
@@ -32,7 +77,7 @@ with open(HTML_PATH, 'rb') as f:
     HTML_BYTES = f.read()
 
 def get_conn(host, port, use_ssl=True):
-    key = f"{host}:{port}"
+    key = f"{host}:{port}:{use_ssl}"
     if key in conns:
         return conns[key]
     try:
@@ -69,11 +114,11 @@ def probe_target(host, port, path, use_ssl=True):
         return -1, None
 
 def probe_loop():
-    for name, (h, p, path) in TARGETS.items():
-        probe_target(h, p, path, not h.startswith('127.'))
+    for name, (h, p, path, use_ssl) in TARGETS.items():
+        probe_target(h, p, path, use_ssl)
     while True:
-        for name, (h, p, path) in TARGETS.items():
-            ms, block = probe_target(h, p, path, not h.startswith('127.'))
+        for name, (h, p, path, use_ssl) in TARGETS.items():
+            ms, block = probe_target(h, p, path, use_ssl)
             latest[name] = {'ms': ms, 'block': block}
         latest['timestamp'] = time.time()
         r, s = latest['read']['ms'], latest['sequencer']['ms']
@@ -179,12 +224,12 @@ class ThreadedServer(socketserver.ThreadingMixIn, HTTPServer):
 
 
 if __name__ == '__main__':
+    chain_data.configure(SETTINGS)
     threading.Thread(target=probe_loop, daemon=True).start()
     chain_data.start()
     print("Warming up probes...")
     time.sleep(3)
     print("Chain data fetcher started (updates every 30s)")
-    port = 3000
-    srv = ThreadedServer(('127.0.0.1', port), Handler)
-    print(f"Dashboard: http://127.0.0.1:{port}")
+    srv = ThreadedServer(('127.0.0.1', SERVER_PORT), Handler)
+    print(f"Dashboard: http://127.0.0.1:{SERVER_PORT}")
     srv.serve_forever()

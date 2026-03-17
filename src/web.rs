@@ -13,13 +13,12 @@ use tracing::info;
 use crate::arbitrage::dashboard::ArbDashboard;
 use crate::utils::metrics::Metrics;
 
-const PY_DASHBOARD_BASE: &str = "http://127.0.0.1:3000";
-
 /// Shared state accessible by all HTTP handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub metrics: Metrics,
     pub arb_dashboard: ArbDashboard,
+    pub python_dashboard_base: Arc<str>,
 }
 
 /// Start the dashboard web server on the given port.
@@ -27,10 +26,14 @@ pub async fn start_dashboard(
     metrics: Metrics,
     arb_dashboard: ArbDashboard,
     port: u16,
+    python_dashboard_port: u16,
 ) -> eyre::Result<()> {
     let state = Arc::new(AppState {
         metrics,
         arb_dashboard,
+        python_dashboard_base: Arc::<str>::from(format!(
+            "http://127.0.0.1:{python_dashboard_port}"
+        )),
     });
 
     let app = Router::new()
@@ -73,8 +76,8 @@ async fn api_arb(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(state.arb_dashboard.to_json())
 }
 
-async fn proxy_python_json(path: &str) -> Option<Value> {
-    let url = format!("{PY_DASHBOARD_BASE}{path}");
+async fn proxy_python_json(base: &str, path: &str) -> Option<Value> {
+    let url = format!("{base}{path}");
     let resp = reqwest::get(url).await.ok()?;
     if !resp.status().is_success() {
         return None;
@@ -83,23 +86,31 @@ async fn proxy_python_json(path: &str) -> Option<Value> {
 }
 
 /// /api/latency — prefer the Python latency probe service, fall back to an empty payload.
-async fn api_latency() -> impl IntoResponse {
-    Json(proxy_python_json("/api/latency").await.unwrap_or_else(|| {
-        serde_json::json!({
-            "probes": {},
-            "history": {"read": [], "sequencer": [], "total": []}
-        })
-    }))
+async fn api_latency(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(
+        proxy_python_json(state.python_dashboard_base.as_ref(), "/api/latency")
+            .await
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "probes": {},
+                    "history": {"read": [], "sequencer": [], "total": []}
+                })
+            }),
+    )
 }
 
 /// /api/chain — prefer the Python chain-data service, fall back to an empty payload.
-async fn api_chain() -> impl IntoResponse {
-    Json(proxy_python_json("/api/chain").await.unwrap_or_else(|| {
-        serde_json::json!({
-            "market_liquidations": [],
-            "competitors": [],
-            "near_liquidation": [],
-            "last_updated": 0
-        })
-    }))
+async fn api_chain(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(
+        proxy_python_json(state.python_dashboard_base.as_ref(), "/api/chain")
+            .await
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "market_liquidations": [],
+                    "competitors": [],
+                    "near_liquidation": [],
+                    "last_updated": 0
+                })
+            }),
+    )
 }

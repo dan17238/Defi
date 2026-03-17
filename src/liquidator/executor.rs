@@ -28,7 +28,8 @@ const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = LiquidationExecuted::SIGNATUR
 const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const RECEIPT_MAX_POLLS: usize = 24;
 const RECEIPT_RECHECK_INTERVAL: Duration = Duration::from_secs(10);
-const RECEIPT_MAX_RECHECKS: usize = 6;
+const RECEIPT_MAX_RECHECKS: usize = 100;
+const RECEIPT_MISSING_RELEASES: usize = 3;
 
 /// Submits liquidation transactions on-chain without blocking for confirmation.
 ///
@@ -58,21 +59,7 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
         }
     }
 
-    /// Build, sign, and send a transaction to the flash liquidator contract.
-    ///
-    /// Returns the transaction hash immediately after submission without
-    /// waiting for the receipt. The simulation already verified the
-    /// transaction will succeed; if it reverts on-chain the flash loan is
-    /// atomic so we only lose gas.
-    pub async fn execute(
-        &self,
-        to: Address,
-        calldata: Bytes,
-        max_gas_price_gwei: f64,
-        inflight: Arc<DashSet<String>>,
-        inflight_key: String,
-    ) -> Result<FixedBytes<32>> {
-        // Check current gas price and bail if too high
+    pub async fn current_gas_price(&self, max_gas_price_gwei: f64) -> Result<u128> {
         let gas_price = self
             .provider
             .get_gas_price()
@@ -89,6 +76,23 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
             );
         }
 
+        Ok(gas_price)
+    }
+
+    /// Build, sign, and send a transaction to the flash liquidator contract.
+    ///
+    /// Returns the transaction hash immediately after submission without
+    /// waiting for the receipt. The simulation already verified the
+    /// transaction will succeed; if it reverts on-chain the flash loan is
+    /// atomic so we only lose gas.
+    pub async fn execute(
+        &self,
+        to: Address,
+        calldata: Bytes,
+        gas_price: u128,
+        inflight: Arc<DashSet<String>>,
+        inflight_key: String,
+    ) -> Result<FixedBytes<32>> {
         debug!(
             to = %to,
             gas_price,
@@ -165,7 +169,10 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
             }
 
             if receipt.is_none() {
-                for attempt in 1..=RECEIPT_MAX_RECHECKS {
+                let mut missing_tx_count = 0usize;
+                let mut recheck_attempt = 0usize;
+                loop {
+                    recheck_attempt += 1;
                     match receipt_provider
                         .get_transaction_receipt(tx_hash_for_task)
                         .await
@@ -179,25 +186,31 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                             .await
                         {
                             Ok(Some(_)) => {
+                                missing_tx_count = 0;
                                 debug!(
                                     tx_hash = %tx_hash_for_task,
-                                    attempt,
+                                    attempt = recheck_attempt,
                                     "Liquidation tx still pending, keeping inflight lock"
                                 );
                             }
                             Ok(None) => {
+                                missing_tx_count += 1;
                                 warn!(
                                     tx_hash = %tx_hash_for_task,
-                                    attempt,
-                                    "Liquidation tx no longer visible and has no receipt; releasing inflight lock"
+                                    attempt = recheck_attempt,
+                                    missing = missing_tx_count,
+                                    "Liquidation tx missing from tx lookup and has no receipt"
                                 );
-                                break;
+                                if missing_tx_count >= RECEIPT_MISSING_RELEASES {
+                                    break;
+                                }
                             }
                             Err(e) => {
                                 last_error = Some(e.to_string());
+                                missing_tx_count = 0;
                                 warn!(
                                     tx_hash = %tx_hash_for_task,
-                                    attempt,
+                                    attempt = recheck_attempt,
                                     error = %e,
                                     "Failed to query liquidation tx after receipt timeout"
                                 );
@@ -205,9 +218,10 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                         },
                         Err(e) => {
                             last_error = Some(e.to_string());
+                            missing_tx_count = 0;
                             warn!(
                                 tx_hash = %tx_hash_for_task,
-                                attempt,
+                                attempt = recheck_attempt,
                                 error = %e,
                                 "Receipt recheck failed for liquidation tx"
                             );
@@ -217,9 +231,15 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                     if receipt.is_some() {
                         break;
                     }
-                    if attempt < RECEIPT_MAX_RECHECKS {
-                        tokio::time::sleep(RECEIPT_RECHECK_INTERVAL).await;
+                    if recheck_attempt >= RECEIPT_MAX_RECHECKS {
+                        warn!(
+                            tx_hash = %tx_hash_for_task,
+                            attempts = recheck_attempt,
+                            "Releasing liquidation inflight lock after extended pending receipt timeout"
+                        );
+                        break;
                     }
+                    tokio::time::sleep(RECEIPT_RECHECK_INTERVAL).await;
                 }
             }
 

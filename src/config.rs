@@ -101,6 +101,8 @@ pub struct MonitoringConfig {
     pub metrics_port: u16,
     #[serde(default = "default_dashboard_port")]
     pub dashboard_port: u16,
+    #[serde(default = "default_python_dashboard_port")]
+    pub python_dashboard_port: u16,
     pub log_level: String,
     /// Telegram bot token (from @BotFather). Empty = notifications disabled.
     #[serde(default)]
@@ -151,6 +153,10 @@ fn default_dashboard_port() -> u16 {
     3001
 }
 
+fn default_python_dashboard_port() -> u16 {
+    3000
+}
+
 impl AppConfig {
     /// Load configuration from a TOML file at the given path.
     pub fn load(path: &Path) -> Result<Self> {
@@ -169,6 +175,11 @@ impl AppConfig {
         }
         if self.rpc.http_url.is_empty() {
             eyre::bail!("rpc.http_url must not be empty");
+        }
+        if self.monitoring.dashboard_port == self.monitoring.python_dashboard_port {
+            eyre::bail!(
+                "monitoring.dashboard_port and monitoring.python_dashboard_port must differ"
+            );
         }
         if self.execution.multicall_batch_size == 0 {
             eyre::bail!("execution.multicall_batch_size must be > 0");
@@ -252,6 +263,7 @@ mod tests {
             monitoring: MonitoringConfig {
                 metrics_port: 9090,
                 dashboard_port: 3000,
+                python_dashboard_port: 3001,
                 log_level: "info".to_string(),
                 telegram_bot_token: String::new(),
                 telegram_chat_id: String::new(),

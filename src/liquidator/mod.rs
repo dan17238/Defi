@@ -118,10 +118,28 @@ where
             return Ok(false);
         }
 
+        let gas_price_wei = match self
+            .executor
+            .current_gas_price(self.config.max_gas_price_gwei)
+            .await
+        {
+            Ok(gas_price) => gas_price,
+            Err(e) => {
+                self.inflight.remove(&inflight_key);
+                self.metrics.record_error();
+                return Err(e);
+            }
+        };
+
         // Step 1: Simulate
         let sim_result = self
             .simulator
-            .simulate_liquidation(opportunity, self.flash_liquidator_address, min_profit)
+            .simulate_liquidation(
+                opportunity,
+                self.flash_liquidator_address,
+                min_profit,
+                gas_price_wei,
+            )
             .await;
 
         let sim_result = match sim_result {
@@ -182,9 +200,8 @@ where
             return Ok(false);
         }
 
-        // Build and send the transaction
-        // Set minProfit to cover: flash loan premium + estimated gas cost + profit margin.
-        // The on-chain contract will revert if actual profit is below this threshold.
+        // Build and send the transaction using the exact same gas price that
+        // was used during simulation.
         let calldata = flash_loan::encode_flash_liquidation(
             opportunity,
             self.flash_liquidator_address,
@@ -196,7 +213,7 @@ where
             .execute(
                 self.flash_liquidator_address,
                 calldata,
-                self.config.max_gas_price_gwei,
+                gas_price_wei,
                 self.inflight.clone(),
                 inflight_key.clone(),
             )

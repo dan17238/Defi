@@ -6,10 +6,12 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IUniswapV3Pool, IUniswapV3SwapCallback} from "./interfaces/IUniswapV3Pool.sol";
 
 /// @title FlashArbitrage
-/// @notice Executes atomic UniV3 flash swap arbitrage — supports 2-pool and multi-hop (N-pool) routes.
+/// @notice Executes atomic flash swap arbitrage across UniV3-compatible DEXes (UniV3, SushiV3, PancakeSwapV3).
 /// @dev Multi-hop uses nested callbacks: pool[0].swap() → callback → pool[1].swap() → ... → pool[N-1].
 ///      Each callback knows its step index via abi-encoded data. The route must be circular:
 ///      the last pool's output token must equal what pool[0] wants back.
+///      PancakeSwap V3 pools call pancakeV3SwapCallback instead of uniswapV3SwapCallback,
+///      but the function signature and semantics are identical.
 contract FlashArbitrage is IUniswapV3SwapCallback {
     using SafeERC20 for IERC20;
 
@@ -203,8 +205,17 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         _executing = false;
     }
 
-    /// @notice UniV3 swap callback — routes to legacy 2-pool or multi-hop handler
+    /// @notice UniV3/SushiV3 swap callback — routes to legacy 2-pool or multi-hop handler
     function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external override {
+        _swapCallback(amount0Delta, amount1Delta, data);
+    }
+
+    /// @notice PancakeSwap V3 swap callback — identical semantics, different function name
+    function pancakeV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
+        _swapCallback(amount0Delta, amount1Delta, data);
+    }
+
+    function _swapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
         if (!_executing) revert InvalidCallback();
 
         // Multi-hop path: _hopCount > 0 means we're in executeMultiHop

@@ -36,9 +36,13 @@ pub trait Protocol: Send + Sync {
     ///
     /// Returns a list of all positions whose health factor is below the
     /// liquidation threshold.
+    ///
+    /// `block_number = Some(n)` pins all reads to a confirmed block for
+    /// consistency. `None` lets the protocol query the provider's latest state,
+    /// which is useful for fast feed-triggered rescans.
     fn get_liquidatable_positions(
         &self,
-        block_number: u64,
+        block_number: Option<u64>,
     ) -> impl std::future::Future<Output = Result<Vec<LiquidationOpportunity>>> + Send;
 
     /// Discover borrowers by scanning recent on-chain events (e.g. Borrow events).

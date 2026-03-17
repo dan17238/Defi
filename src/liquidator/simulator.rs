@@ -112,6 +112,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         opportunity: &LiquidationOpportunity,
         flash_liquidator: Address,
         min_profit: U256,
+        gas_price_wei: u128,
     ) -> Result<SimulationResult> {
         debug!(
             protocol = %opportunity.protocol,
@@ -149,7 +150,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             .kind(TxKind::Call(flash_liquidator))
             .data(calldata.clone())
             .gas_limit(6_000_000)
-            .gas_price(100_000_000) // 0.1 gwei
+            .gas_price(gas_price_wei)
             .value(U256::ZERO)
             .nonce(0)
             .build_fill();
@@ -182,7 +183,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             .kind(TxKind::Call(flash_liquidator))
             .data(calldata)
             .gas_limit(6_000_000)
-            .gas_price(100_000_000)
+            .gas_price(gas_price_wei)
             .value(U256::ZERO)
             .nonce(0)
             .build_fill();
@@ -225,12 +226,10 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
                     }
                 }
 
-                // Estimate gas cost in USD.
-                // Use cached ETH price from Chainlink (updated by Radiant protocol monitor).
-                // Arbitrum L2 gas ~0.1 gwei + L1 data posting ~$0.03 per tx.
-                let gas_price_gwei = 0.1_f64;
+                // Estimate gas cost in USD using the exact same gas price that
+                // the executor will use for the live transaction.
                 let gas_cost_usd =
-                    crate::utils::gas::arbitrum_gas_cost_usd_from_gwei(gas_used, gas_price_gwei);
+                    crate::utils::gas::arbitrum_gas_cost_usd(gas_used, gas_price_wei);
 
                 // If we found the real profit from the event, convert to USD and use it.
                 // Otherwise, fall back to the rough estimate from the opportunity.

@@ -45,6 +45,7 @@ rpc_url = "https://arb1-sequencer.arbitrum.io/rpc"
 [monitoring]
 metrics_port = 9090
 dashboard_port = 3001
+python_dashboard_port = 3000
 log_level = "info"
 # Telegram notifications (get token from @BotFather, chat_id from @userinfobot)
 telegram_bot_token = ""
@@ -155,6 +156,16 @@ token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
 fee_a = 100
 fee_b = 500
 
+# --- GMX/WETH pairs ---
+[[arbitrage.pairs]]
+name = "GMX/WETH 0.3% <> 1%"
+pool_a = "0x1aeedd3727a6431b8f070c0afaa81cc74f273882"
+pool_b = "0x80a9ae39310abf666a87c743d6ebbd0e8c42158e"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a"
+fee_a = 3000
+fee_b = 10000
+
 # === Cross-DEX pairs (UniV3 <> SushiSwap V3, same interface) ===
 # Same fee tier, same token pair, different DEX → pure price divergence arb
 
@@ -203,6 +214,44 @@ token1 = "0x912CE59144191C1204E64559FE8253a0e49E6548"
 fee_a = 3000
 fee_b = 3000
 
+[[arbitrage.pairs]]
+name = "LINK/WETH 0.3% Uni<>Sushi"
+pool_a = "0x468b88941e7cc0b88c1869d68ab6b570bcef62ff"
+pool_b = "0x55a7e0ab34038d75d0e2118254fd84fdedcd4e65"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4"
+fee_a = 3000
+fee_b = 3000
+
+[[arbitrage.pairs]]
+name = "USDC/USDT 0.01% Uni<>Sushi"
+pool_a = "0xbe3ad6a5669dc0b8b12febc03608860c31e2eef6"
+pool_b = "0xd9e96f78b3c68ba79fd4dfad4ddf4f27bd1e2ecf"
+token0 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+token1 = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+fee_a = 100
+fee_b = 100
+
+# === Cross-DEX pairs (UniV3 <> PancakeSwap V3, needs pancakeV3SwapCallback) ===
+
+[[arbitrage.pairs]]
+name = "WETH/USDC 0.05% Uni<>PCS 0.01%"
+pool_a = "0xC6962004f452bE9203591991D15f6b388e09E8D0"
+pool_b = "0x7fcdc35463e3770c2fb992716cd070b63540b947"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+fee_a = 500
+fee_b = 100
+
+[[arbitrage.pairs]]
+name = "ARB/WETH 0.05% Uni<>PCS 0.01%"
+pool_a = "0xc6f780497a95e246eb9449f5e4770916dcd6396a"
+pool_b = "0x11d53ec50bc8f54b9357fbfe2a7de034fc00f8b3"
+token0 = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+token1 = "0x912CE59144191C1204E64559FE8253a0e49E6548"
+fee_a = 500
+fee_b = 100
+
 # === Multi-hop routes (triangular arbitrage) ===
 
 # WETH → USDC(0.05%) → USDC.e(0.01%) → WETH(USDC.e/WETH 0.3%)
@@ -235,5 +284,62 @@ pools = [
     "0xC6962004f452bE9203591991D15f6b388e09E8D0",
     "0xbe3ad6a5669dc0b8b12febc03608860c31e2eef6",
     "0xc82819f72a9e77e2c0c3a69b3196478f44303cf4",
+]
+input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+
+# === Cross-DEX triangular routes (UniV3 + PancakeSwapV3) ===
+
+# WETH→USDC(PCS 0.01%)→WBTC(Uni 0.05%)→WETH(Uni 0.05%)
+# Total fees: 0.11%
+[[arbitrage.routes]]
+name = "WETH→USDC(PCS)→WBTC→WETH"
+pools = [
+    "0x7fcdc35463e3770c2fb992716cd070b63540b947",
+    "0x0e4831319a50228b9e450861297ab92dee15b44f",
+    "0x2f5e87c9312fa29aed5c179e456625d79015299c",
+]
+input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+
+# WETH→USDC(PCS 0.01%)→USDT(Uni 0.01%)→WETH(Uni 0.05%)
+# Total fees: 0.07%
+[[arbitrage.routes]]
+name = "WETH→USDC(PCS)→USDT→WETH"
+pools = [
+    "0x7fcdc35463e3770c2fb992716cd070b63540b947",
+    "0xbe3ad6a5669dc0b8b12febc03608860c31e2eef6",
+    "0x641c00a822e8b671738d32a431a4fb6074e5c79d",
+]
+input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+
+# WBTC→WETH(PCS 0.01%)→USDC(Uni 0.05%)→WBTC(Uni 0.05%)
+# Total fees: 0.11%
+[[arbitrage.routes]]
+name = "WBTC→WETH(PCS)→USDC→WBTC"
+pools = [
+    "0x4bfc22a4da7f31f8a912a79a7e44a822398b4390",
+    "0xc6962004f452be9203591991d15f6b388e09e8d0",
+    "0x0e4831319a50228b9e450861297ab92dee15b44f",
+]
+input_token = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
+
+# WBTC→WETH(PCS 0.01%)→USDT(Uni 0.05%)→WBTC(Uni 0.05%)
+# Total fees: 0.11%
+[[arbitrage.routes]]
+name = "WBTC→WETH(PCS)→USDT→WBTC"
+pools = [
+    "0x4bfc22a4da7f31f8a912a79a7e44a822398b4390",
+    "0x641c00a822e8b671738d32a431a4fb6074e5c79d",
+    "0x5969efdde3cf5c0d9a88ae51e47d721096a97203",
+]
+input_token = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
+
+# WETH→USDT(PCS 0.01%)→USDC(Uni 0.01%)→WETH(Uni 0.05%)
+# Total fees: 0.07%
+[[arbitrage.routes]]
+name = "WETH→USDT(PCS)→USDC→WETH"
+pools = [
+    "0x389938cf14be379217570d8e4619e51fbdafaa21",
+    "0xbe3ad6a5669dc0b8b12febc03608860c31e2eef6",
+    "0xc6962004f452be9203591991d15f6b388e09e8d0",
 ]
 input_token = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"

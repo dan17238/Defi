@@ -2,16 +2,20 @@
 """Background blockchain data fetcher for Arbitrum liquidation dashboard."""
 
 import json, time, threading, http.client, ssl, struct
+from urllib.parse import urlparse
 
 # ─── Constants ───
 
 RPC_HOST = 'arb1.arbitrum.io'
 RPC_PORT = 443
 RPC_PATH = '/rpc'
+RPC_USE_SSL = True
 
 AAVE_V3_POOL = '0x794a61358D6845594F94dc1DB02A252b5b4814aD'.lower()
 RADIANT_POOL = '0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1'.lower()
-ETH_USD_APPROX = 3500.0
+ETH_USD_APPROX = 3500.0  # fallback; updated from Chainlink on each cycle
+CHAINLINK_ETH_USD = '0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612'
+CHAINLINK_LATEST_ANSWER_SELECTOR = '0x50d25bcd'  # latestAnswer()
 
 # LiquidationCall(address,address,address,uint256,uint256,address,bool)
 LIQUIDATION_TOPIC = '0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286'
@@ -26,9 +30,9 @@ MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11'
 AGGREGATE3_SELECTOR = '0x82ad56cb'
 GET_USER_ACCOUNT_DATA_SELECTOR = '0xbf92857c'
 
-SCAN_BLOCKS = 500000  # ~35 hours, covers more liquidation events
-MAX_LIQUIDATIONS = 50
-MAX_BORROWERS = 500
+SCAN_BLOCKS = 2_400_000  # ~7 days of Arbitrum blocks
+MAX_LIQUIDATIONS = 100
+MAX_BORROWERS = 2000
 HEALTH_FACTOR_THRESHOLD = 1.5
 MIN_ACTIONABLE_DEBT_USD = 1000.0
 UPDATE_INTERVAL = 30
@@ -66,16 +70,48 @@ _lock = threading.Lock()
 _conn = None
 
 
+def configure(settings):
+    """Apply runtime configuration from the shared TOML settings."""
+    global RPC_HOST, RPC_PORT, RPC_PATH, RPC_USE_SSL, PROTOCOL_POOLS, AAVE_V3_POOL, RADIANT_POOL, _conn
+
+    rpc_url = settings.get('rpc', {}).get('http_url')
+    if rpc_url:
+        parsed = urlparse(rpc_url)
+        if parsed.hostname:
+            RPC_HOST = parsed.hostname
+            RPC_USE_SSL = parsed.scheme == 'https'
+            RPC_PORT = parsed.port or (443 if RPC_USE_SSL else 80)
+            RPC_PATH = parsed.path or '/rpc'
+
+    protocols = {}
+    aave_cfg = settings.get('protocols', {}).get('aave_v3', {})
+    if aave_cfg.get('enabled', True) and aave_cfg.get('pool'):
+        AAVE_V3_POOL = aave_cfg['pool'].lower()
+        protocols['AAVE V3'] = AAVE_V3_POOL
+
+    radiant_cfg = settings.get('protocols', {}).get('radiant', {})
+    if radiant_cfg.get('enabled', True) and radiant_cfg.get('pool'):
+        RADIANT_POOL = radiant_cfg['pool'].lower()
+        protocols['Radiant'] = RADIANT_POOL
+
+    if protocols:
+        PROTOCOL_POOLS = protocols
+    _conn = None
+
+
 # ─── RPC helpers ───
 
 def _get_conn():
-    """Get or create a persistent HTTPS connection."""
+    """Get or create a persistent RPC connection."""
     global _conn
     if _conn is not None:
         return _conn
     try:
-        ctx = ssl.create_default_context()
-        _conn = http.client.HTTPSConnection(RPC_HOST, RPC_PORT, timeout=15, context=ctx)
+        if RPC_USE_SSL:
+            ctx = ssl.create_default_context()
+            _conn = http.client.HTTPSConnection(RPC_HOST, RPC_PORT, timeout=15, context=ctx)
+        else:
+            _conn = http.client.HTTPConnection(RPC_HOST, RPC_PORT, timeout=15)
         return _conn
     except Exception:
         _conn = None
@@ -236,7 +272,7 @@ def _fetch_liquidation_logs(current_block):
     all_logs = []
     batch_size = 100000  # Safe batch size for public RPCs
 
-    for protocol, address in [('AAVE V3', AAVE_V3_POOL), ('Radiant', RADIANT_POOL)]:
+    for protocol, address in PROTOCOL_POOLS.items():
         start = from_block
         while start < current_block:
             end = min(start + batch_size, current_block)
@@ -305,9 +341,14 @@ def _fetch_borrow_logs(current_block):
     from_block = max(0, current_block - SCAN_BLOCKS)
     all_logs = []
     batch_size = 100000
+    borrow_topics = {
+        'AAVE V3': AAVE_BORROW_TOPIC,
+        'Radiant': RADIANT_BORROW_TOPIC,
+    }
     protocols = [
-        ('AAVE V3', AAVE_V3_POOL, AAVE_BORROW_TOPIC),
-        ('Radiant', RADIANT_POOL, RADIANT_BORROW_TOPIC),
+        (protocol, pool, borrow_topics[protocol])
+        for protocol, pool in PROTOCOL_POOLS.items()
+        if protocol in borrow_topics
     ]
 
     for protocol, pool, topic in protocols:
@@ -590,8 +631,27 @@ def _analyze_competitors(liquidation_events):
 
 # ─── Main update loop ───
 
+def _refresh_eth_price():
+    """Fetch live ETH/USD price from Chainlink (8 decimals)."""
+    global ETH_USD_APPROX
+    try:
+        result = _rpc_call("eth_call", [
+            {"to": CHAINLINK_ETH_USD, "data": CHAINLINK_LATEST_ANSWER_SELECTOR},
+            "latest",
+        ])
+        if result and len(result) >= 66:
+            raw = int(result, 16)
+            price = raw / 1e8
+            if price > 100:
+                ETH_USD_APPROX = price
+    except Exception:
+        pass
+
+
 def _do_update():
     """Perform one full update cycle."""
+    _refresh_eth_price()
+
     current_block = _get_block_number()
     if current_block is None:
         return
@@ -660,6 +720,7 @@ def _do_update():
         chain_state['market_liquidations'] = liquidation_events
         chain_state['competitors'] = competitors
         chain_state['near_liquidation'] = near_liquidation
+        chain_state['eth_price_usd'] = ETH_USD_APPROX
         chain_state['last_updated'] = time.time()
 
 

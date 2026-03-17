@@ -14,6 +14,7 @@ pub struct ArbitrageOpportunity {
     pub zero_for_one: Vec<bool>,
     pub amount_in: U256,
     pub estimated_profit_bps: f64,
+    pub estimated_profit_usd: f64,
     pub pair_name: String,
 }
 
@@ -124,12 +125,20 @@ impl ArbitrageDetector {
             .max(0.1);
         let raw = input_available * 0.005 * excess_ratio; // 0.5% of pool[0] available
         let amount = U256::from(raw.max(1.0).min(input_available * 0.2) as u128);
+        let net_profit_bps = spread_bps - self.gas_margin_bps;
+        let input_token = if route.zero_for_one[0] {
+            first.token0
+        } else {
+            first.token1
+        };
+        let estimated_profit_usd = estimate_profit_usd(amount, input_token, net_profit_bps);
 
         Some(ArbitrageOpportunity {
             pools: route.pools.clone(),
             zero_for_one: route.zero_for_one.clone(),
             amount_in: amount,
-            estimated_profit_bps: spread_bps - self.gas_margin_bps,
+            estimated_profit_bps: net_profit_bps,
+            estimated_profit_usd,
             pair_name: route.name.clone(),
         })
     }
@@ -188,15 +197,29 @@ impl ArbitrageDetector {
         };
 
         let amount_in = compute_optimal_amount(state_a, state_b, spread_bps, fee_threshold_bps);
+        let estimated_profit_bps = spread_bps - fee_threshold_bps;
+        let estimated_profit_usd =
+            estimate_profit_usd(amount_in, state_a.token0, estimated_profit_bps);
 
         Some(ArbitrageOpportunity {
             pools: vec![expensive_pool, cheap_pool],
             zero_for_one: vec![true, false], // sell token0 on expensive, buy back on cheap
             amount_in,
-            estimated_profit_bps: spread_bps - fee_threshold_bps,
+            estimated_profit_bps,
+            estimated_profit_usd,
             pair_name: pair.name.clone(),
         })
     }
+}
+
+fn estimate_profit_usd(amount_in: U256, input_token: Address, net_profit_bps: f64) -> f64 {
+    if net_profit_bps <= 0.0 {
+        return 0.0;
+    }
+
+    crate::liquidator::flash_loan::tokens::token_value_usd(amount_in, input_token)
+        .map(|notional_usd| notional_usd * (net_profit_bps / 10_000.0))
+        .unwrap_or(0.0)
 }
 
 /// Convert sqrtPriceX96 (U256) to f64 for comparison.

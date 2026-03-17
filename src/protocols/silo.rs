@@ -107,13 +107,20 @@ impl<P: Provider + Clone + Send + Sync> Protocol for SiloProtocol<P> {
 
     async fn get_liquidatable_positions(
         &self,
-        block_number: u64,
+        block_number: Option<u64>,
     ) -> Result<Vec<LiquidationOpportunity>> {
-        info!(
-            protocol = self.name(),
-            block = block_number,
-            "Silo scanning not yet implemented (Phase 4)"
-        );
+        if let Some(block_number) = block_number {
+            info!(
+                protocol = self.name(),
+                block = block_number,
+                "Silo scanning not yet implemented (Phase 4)"
+            );
+        } else {
+            info!(
+                protocol = self.name(),
+                "Silo scanning not yet implemented (Phase 4)"
+            );
+        }
 
         // Phase 4 TODO:
         // 1. Fetch all silos from the repository

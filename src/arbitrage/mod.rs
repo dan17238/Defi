@@ -54,6 +54,7 @@ fn is_known_dex_router(addr: &Address) -> bool {
         address!("a669e7A0d4b3e4Fa48af2dE86BD4CD7126Be4e13"), // Odos
         address!("1111111254EEB25477B68fb85Ed929f73A960582"), // 1inch
         address!("DEF171Fe48CF0115B1d80b88dc8eAB59176FEe57"), // Paraswap
+        address!("32226588378236Fd0c7c4053999F88aC0e5cAc77"), // PancakeSwap V3 SmartRouter
     ];
     ROUTERS.contains(addr)
 }
@@ -96,7 +97,8 @@ const ARB_EXECUTED_TOPIC: FixedBytes<32> = IFlashArbitrage::ArbitrageExecuted::S
 const RECEIPT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const RECEIPT_MAX_POLLS: usize = 24;
 const RECEIPT_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-const RECEIPT_MAX_RECHECKS: usize = 6;
+const RECEIPT_MAX_RECHECKS: usize = 100;
+const RECEIPT_MISSING_RELEASES: usize = 3;
 
 // ---------------------------------------------------------------------------
 // ArbitrageMonitor
@@ -275,38 +277,17 @@ where
     }
 
     /// Main event loop: listens for sequencer feed events and shutdown signal.
-    ///
-    /// A minimum scan interval prevents overwhelming remote RPCs with Multicall
-    /// requests.  With a local IPC node the interval can be set to zero.
     pub async fn run(
         &self,
         feed_rx: &mut broadcast::Receiver<SequencerEvent>,
         shutdown_rx: &mut broadcast::Receiver<()>,
     ) {
-        // Minimum time between pool-state refreshes.  The sequencer feed fires
-        // per-tx (~4/sec on Arbitrum), but Multicall over remote RPC can't keep
-        // up.  This debounce collapses rapid events into at most one scan per
-        // interval.  With IPC the refresh is <0.3ms so the debounce won't matter.
-        const MIN_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
-
-        let mut last_scan = Instant::now() - MIN_SCAN_INTERVAL;
-        let mut pending_event: Option<SequencerEvent> = None;
-
         loop {
             tokio::select! {
                 result = feed_rx.recv() => {
                     match result {
                         Ok(event) => {
-                            // Always keep the latest event, but only process if
-                            // enough time has elapsed since the last scan.
-                            pending_event = Some(event);
-
-                            if last_scan.elapsed() >= MIN_SCAN_INTERVAL {
-                                if let Some(ev) = pending_event.take() {
-                                    self.on_sequencer_event(&ev).await;
-                                    last_scan = Instant::now();
-                                }
-                            }
+                            self.on_sequencer_event(&event).await;
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             warn!(skipped = n, "Arb monitor lagged behind sequencer feed");
@@ -315,13 +296,6 @@ where
                             info!("Sequencer feed closed, stopping arb monitor");
                             break;
                         }
-                    }
-                }
-                // Process any pending event after the debounce window elapses
-                _ = tokio::time::sleep(MIN_SCAN_INTERVAL.saturating_sub(last_scan.elapsed())), if pending_event.is_some() => {
-                    if let Some(ev) = pending_event.take() {
-                        self.on_sequencer_event(&ev).await;
-                        last_scan = Instant::now();
                     }
                 }
                 _ = shutdown_rx.recv() => {
@@ -369,12 +343,19 @@ where
         );
 
         // 3. Process top opportunities with limited concurrency
-        // Sort by estimated spread (best first), cap at 4
+        // Rank by estimated absolute profit first so small high-bps spreads do
+        // not crowd out larger, more meaningful opportunities.
         let mut ranked = opportunities;
         ranked.sort_by(|a, b| {
-            b.estimated_profit_bps
-                .partial_cmp(&a.estimated_profit_bps)
+            b.estimated_profit_usd
+                .partial_cmp(&a.estimated_profit_usd)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.estimated_profit_bps
+                        .partial_cmp(&a.estimated_profit_bps)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| b.amount_in.cmp(&a.amount_in))
         });
         ranked.truncate(4);
 
@@ -422,40 +403,45 @@ where
             }
         };
 
-        // Bracket search: try multiple amounts around the heuristic seed
+        // Bracket search: try multiple amounts around the heuristic seed.
+        // 3 multipliers with good spread; run simulations in parallel.
         let seed = opp.amount_in;
-        let multipliers: &[f64] = &[0.5, 1.0, 2.0, 4.0];
-        let mut best_result: Option<(ArbSimResult, Bytes)> = None;
+        let multipliers: &[f64] = &[0.5, 1.5, 4.0];
 
+        // 1. Prepare all candidates (fast, synchronous)
+        let mut candidates: Vec<(ArbitrageOpportunity, Bytes)> = Vec::new();
         for &mult in multipliers {
             let scaled = U256::from((seed.saturating_to::<u128>() as f64 * mult) as u128);
             if scaled.is_zero() {
                 continue;
             }
-
             let mut trial_opp = opp.clone();
             trial_opp.amount_in = scaled;
-
-            let calldata = match self.encode_arb_calldata(&trial_opp, min_profit_tokens) {
-                Ok(cd) => cd,
-                Err(_) => continue,
-            };
-
-            let sim = match self.simulate_arbitrage(calldata.clone(), &trial_opp).await {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if sim.reverted || !sim.profitable {
-                continue;
+            if let Ok(cd) = self.encode_arb_calldata(&trial_opp, min_profit_tokens) {
+                candidates.push((trial_opp, cd));
             }
+        }
 
-            let is_better = match &best_result {
-                Some((prev, _)) => sim.profit_usd > prev.profit_usd,
-                None => true,
-            };
-            if is_better {
-                best_result = Some((sim, calldata));
+        // 2. Run all simulations in parallel
+        let sim_futs: Vec<_> = candidates
+            .iter()
+            .map(|(trial_opp, cd)| self.simulate_arbitrage(cd.clone(), trial_opp))
+            .collect();
+        let sim_results = futures::future::join_all(sim_futs).await;
+
+        // 3. Pick the best profitable result
+        let mut best_result: Option<(ArbSimResult, Bytes)> = None;
+        for (i, result) in sim_results.into_iter().enumerate() {
+            if let Ok(sim) = result {
+                if !sim.reverted && sim.profitable {
+                    let is_better = match &best_result {
+                        Some((prev, _)) => sim.profit_usd > prev.profit_usd,
+                        None => true,
+                    };
+                    if is_better {
+                        best_result = Some((sim, candidates[i].1.clone()));
+                    }
+                }
             }
         }
 
@@ -800,7 +786,10 @@ where
             }
 
             if receipt.is_none() {
-                for attempt in 1..=RECEIPT_MAX_RECHECKS {
+                let mut missing_tx_count = 0usize;
+                let mut recheck_attempt = 0usize;
+                loop {
+                    recheck_attempt += 1;
                     match receipt_provider.get_transaction_receipt(tx_hash).await {
                         Ok(Some(found_receipt)) => {
                             receipt = Some(found_receipt);
@@ -808,28 +797,34 @@ where
                         }
                         Ok(None) => match receipt_provider.get_transaction_by_hash(tx_hash).await {
                             Ok(Some(_)) => {
+                                missing_tx_count = 0;
                                 debug!(
                                     pair = %pair_name,
                                     tx = %tx_hash,
-                                    attempt,
+                                    attempt = recheck_attempt,
                                     "Arbitrage tx still pending, keeping inflight lock"
                                 );
                             }
                             Ok(None) => {
+                                missing_tx_count += 1;
                                 warn!(
                                     pair = %pair_name,
                                     tx = %tx_hash,
-                                    attempt,
-                                    "Arbitrage tx no longer visible and has no receipt; releasing inflight lock"
+                                    attempt = recheck_attempt,
+                                    missing = missing_tx_count,
+                                    "Arbitrage tx missing from tx lookup and has no receipt"
                                 );
-                                break;
+                                if missing_tx_count >= RECEIPT_MISSING_RELEASES {
+                                    break;
+                                }
                             }
                             Err(e) => {
                                 last_error = Some(e.to_string());
+                                missing_tx_count = 0;
                                 warn!(
                                     pair = %pair_name,
                                     tx = %tx_hash,
-                                    attempt,
+                                    attempt = recheck_attempt,
                                     error = %e,
                                     "Failed to query arbitrage tx after receipt timeout"
                                 );
@@ -837,10 +832,11 @@ where
                         },
                         Err(e) => {
                             last_error = Some(e.to_string());
+                            missing_tx_count = 0;
                             warn!(
                                 pair = %pair_name,
                                 tx = %tx_hash,
-                                attempt,
+                                attempt = recheck_attempt,
                                 error = %e,
                                 "Receipt recheck failed for arbitrage tx"
                             );
@@ -850,9 +846,16 @@ where
                     if receipt.is_some() {
                         break;
                     }
-                    if attempt < RECEIPT_MAX_RECHECKS {
-                        tokio::time::sleep(RECEIPT_RECHECK_INTERVAL).await;
+                    if recheck_attempt >= RECEIPT_MAX_RECHECKS {
+                        warn!(
+                            pair = %pair_name,
+                            tx = %tx_hash,
+                            attempts = recheck_attempt,
+                            "Releasing arbitrage inflight lock after extended pending receipt timeout"
+                        );
+                        break;
                     }
+                    tokio::time::sleep(RECEIPT_RECHECK_INTERVAL).await;
                 }
             }
 
