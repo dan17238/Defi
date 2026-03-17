@@ -46,6 +46,9 @@ rpc_url = "https://arb1-sequencer.arbitrum.io/rpc"
 metrics_port = 9090
 dashboard_port = 3000
 log_level = "info"
+# Telegram notifications (get token from @BotFather, chat_id from @userinfobot)
+telegram_bot_token = ""
+telegram_chat_id = ""
 
 [arbitrage]
 enabled = false

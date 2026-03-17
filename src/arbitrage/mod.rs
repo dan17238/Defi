@@ -107,8 +107,8 @@ pub struct ArbitrageMonitor<R, E> {
     flash_arb_contract: Address,
     dashboard: ArbDashboard,
     inflight: Arc<DashSet<String>>,
-    /// Limits concurrent revm simulations to avoid overloading IPC/RPC.
     sim_semaphore: Arc<Semaphore>,
+    telegram: Option<crate::utils::telegram::Telegram>,
 }
 
 impl<R, E> ArbitrageMonitor<R, E>
@@ -125,6 +125,7 @@ where
         flash_arb_contract: Address,
         metrics: Metrics,
         dashboard: ArbDashboard,
+        telegram: Option<crate::utils::telegram::Telegram>,
     ) -> Result<Self> {
         let pairs = pairs::parse_pairs(&config.pairs)?;
 
@@ -245,7 +246,8 @@ where
             flash_arb_contract,
             dashboard,
             inflight: Arc::new(DashSet::new()),
-            sim_semaphore: Arc::new(Semaphore::new(3)), // max 3 concurrent simulations
+            sim_semaphore: Arc::new(Semaphore::new(3)),
+            telegram,
         })
     }
 
@@ -700,6 +702,7 @@ where
         let dash = self.dashboard.clone();
         let inflight = self.inflight.clone();
         let receipt_provider = self.exec_provider.clone();
+        let tg = self.telegram.clone();
         let tx_str = format!("{tx_hash:#x}");
         dash.record_submitted(
             &pair_name,
@@ -767,11 +770,17 @@ where
                         net_profit_usd,
                         "Arb tx confirmed"
                     );
+                    if let Some(ref tg) = tg {
+                        tg.profit("套利", &pair_name, net_profit_usd, &tx_str);
+                    }
                 }
                 Some(receipt) => {
                     metrics.record_error();
                     dash.record_reverted(&pair_name, &tx_str, receipt.gas_used());
                     warn!(pair = %pair_name, tx = %tx_hash, gas_used = receipt.gas_used(), "Arb tx reverted on-chain");
+                    if let Some(ref tg) = tg {
+                        tg.revert("套利", &pair_name, &tx_str);
+                    }
                 }
                 None => {
                     metrics.record_error();

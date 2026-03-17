@@ -138,6 +138,15 @@ async fn main() -> Result<()> {
     // Initialize metrics
     let metrics = Metrics::new();
 
+    // Initialize Telegram notifications (None if token/chat_id empty)
+    let telegram = crate::utils::telegram::Telegram::new(
+        &config.monitoring.telegram_bot_token,
+        &config.monitoring.telegram_chat_id,
+    );
+    if telegram.is_some() {
+        info!("Telegram notifications enabled");
+    }
+
     // Wrap exec_provider in Arc so Liquidator and ArbitrageMonitor share the
     // SAME NonceFiller instance. A plain .clone() creates an independent nonce
     // cache, which causes nonce conflicts when both submit concurrently.
@@ -349,6 +358,7 @@ async fn main() -> Result<()> {
                 flash_arb_address,
                 metrics.clone(),
                 arb_dashboard.clone(),
+                telegram.clone(),
             )
             .await
             .wrap_err("Failed to initialize ArbitrageMonitor")?;

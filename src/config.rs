@@ -102,6 +102,12 @@ pub struct MonitoringConfig {
     #[serde(default = "default_dashboard_port")]
     pub dashboard_port: u16,
     pub log_level: String,
+    /// Telegram bot token (from @BotFather). Empty = notifications disabled.
+    #[serde(default)]
+    pub telegram_bot_token: String,
+    /// Telegram chat ID to send notifications to.
+    #[serde(default)]
+    pub telegram_chat_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -247,6 +253,8 @@ mod tests {
                 metrics_port: 9090,
                 dashboard_port: 3000,
                 log_level: "info".to_string(),
+                telegram_bot_token: String::new(),
+                telegram_chat_id: String::new(),
             },
             arbitrage: None,
         }
