@@ -169,6 +169,7 @@ async fn main() -> Result<()> {
             flash_liquidator_address,
             wallet_address,
             metrics.clone(),
+            telegram.clone(),
         )))
     } else {
         None

@@ -48,10 +48,11 @@ where
         flash_liquidator_address: Address,
         wallet_address: Address,
         metrics: Metrics,
+        telegram: Option<crate::utils::telegram::Telegram>,
     ) -> Self {
         Self {
             simulator: Simulator::new(read_provider, wallet_address),
-            executor: Executor::new(exec_provider, metrics.clone()),
+            executor: Executor::new(exec_provider, metrics.clone(), telegram),
             config,
             metrics,
             flash_liquidator_address,

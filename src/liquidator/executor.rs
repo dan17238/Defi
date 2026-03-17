@@ -40,11 +40,12 @@ const RECEIPT_MAX_POLLS: usize = 24;
 pub struct Executor<P> {
     provider: P,
     metrics: Metrics,
+    telegram: Option<crate::utils::telegram::Telegram>,
 }
 
 impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
-    pub fn new(provider: P, metrics: Metrics) -> Self {
-        Self { provider, metrics }
+    pub fn new(provider: P, metrics: Metrics, telegram: Option<crate::utils::telegram::Telegram>) -> Self {
+        Self { provider, metrics, telegram }
     }
 
     /// Build, sign, and send a transaction to the flash liquidator contract.
@@ -114,6 +115,7 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
 
         let metrics = self.metrics.clone();
         let receipt_provider = self.provider.clone();
+        let tg = self.telegram.clone();
         let tx_hash_for_task = tx_hash;
         tokio::spawn(async move {
             let mut receipt = None;
@@ -173,6 +175,9 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                         net_profit_usd,
                         "Liquidation tx confirmed"
                     );
+                    if let Some(ref tg) = tg {
+                        tg.profit("清算", "liquidation", net_profit_usd, &format!("{tx_hash_for_task:#x}"));
+                    }
                 }
                 Some(receipt) => {
                     metrics.record_error();
@@ -181,6 +186,9 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                         gas_used = receipt.gas_used(),
                         "Liquidation tx reverted on-chain"
                     );
+                    if let Some(ref tg) = tg {
+                        tg.revert("清算", "liquidation", &format!("{tx_hash_for_task:#x}"));
+                    }
                 }
                 None => {
                     metrics.record_error();
