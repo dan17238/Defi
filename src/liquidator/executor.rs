@@ -27,8 +27,8 @@ sol! {
 const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = LiquidationExecuted::SIGNATURE_HASH;
 const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const RECEIPT_MAX_POLLS: usize = 24;
-const RECEIPT_RECHECK_INTERVAL: Duration = Duration::from_secs(30);
-const RECEIPT_MAX_RECHECKS: usize = 20;
+const RECEIPT_RECHECK_INTERVAL: Duration = Duration::from_secs(10);
+const RECEIPT_MAX_RECHECKS: usize = 6;
 
 /// Submits liquidation transactions on-chain without blocking for confirmation.
 ///

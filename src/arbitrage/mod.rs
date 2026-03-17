@@ -48,6 +48,12 @@ fn is_known_dex_router(addr: &Address) -> bool {
         address!("1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"), // SushiSwap Router
         address!("8A21F6768C1f8075791D08546Dadf6daA0bE820c"), // SushiSwap V3 Router
         address!("c873fEcbd354f5A56E00E710B90EF4201db2448d"), // Camelot Router
+        address!("b4315e873dBcf96Ffd0acd8EA43f689D8c20fB30"), // Trader Joe V2
+        address!("6131B5fae19EA4f9D964eAc0408E4408b66337b5"), // KyberSwap
+        address!("4c4AF8DBc524681930a27b2F1af5bcC8062E6fB7"), // WOOFi
+        address!("a669e7A0d4b3e4Fa48af2dE86BD4CD7126Be4e13"), // Odos
+        address!("1111111254EEB25477B68fb85Ed929f73A960582"), // 1inch
+        address!("DEF171Fe48CF0115B1d80b88dc8eAB59176FEe57"), // Paraswap
     ];
     ROUTERS.contains(addr)
 }
@@ -89,8 +95,8 @@ sol! {
 const ARB_EXECUTED_TOPIC: FixedBytes<32> = IFlashArbitrage::ArbitrageExecuted::SIGNATURE_HASH;
 const RECEIPT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const RECEIPT_MAX_POLLS: usize = 24;
-const RECEIPT_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-const RECEIPT_MAX_RECHECKS: usize = 20;
+const RECEIPT_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const RECEIPT_MAX_RECHECKS: usize = 6;
 
 // ---------------------------------------------------------------------------
 // ArbitrageMonitor
