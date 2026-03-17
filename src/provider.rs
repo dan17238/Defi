@@ -1,4 +1,5 @@
 use alloy::network::{Ethereum, EthereumWallet};
+use alloy::primitives::Address;
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };
@@ -115,4 +116,41 @@ pub async fn get_latest_block_number<P: Provider>(provider: &P) -> Result<u64> {
         .await
         .wrap_err("Failed to fetch latest block number")?;
     Ok(block_number)
+}
+
+/// Find the first block where a contract has code.
+///
+/// Uses binary search over `eth_getCode` so protocol discovery can backfill from
+/// the pool's real deployment block without hard-coding chain-specific ranges.
+pub async fn find_contract_deployment_block<P: Provider>(
+    provider: &P,
+    contract: Address,
+) -> Result<u64> {
+    let latest = get_latest_block_number(provider).await?;
+    let latest_code = provider
+        .get_code_at(contract)
+        .block_id(latest.into())
+        .await
+        .wrap_err("Failed to fetch contract code at latest block")?;
+    if latest_code.is_empty() {
+        eyre::bail!("No code found for contract {contract} at latest block");
+    }
+
+    let mut low = 0u64;
+    let mut high = latest;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let code = provider
+            .get_code_at(contract)
+            .block_id(mid.into())
+            .await
+            .wrap_err("Failed to fetch historical contract code")?;
+        if code.is_empty() {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+
+    Ok(low)
 }

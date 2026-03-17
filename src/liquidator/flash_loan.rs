@@ -1,6 +1,7 @@
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
+use eyre::Result;
 
 use crate::protocols::LiquidationOpportunity;
 
@@ -48,12 +49,12 @@ sol! {
 // ---------------------------------------------------------------------------
 
 /// Map protocol name to on-chain enum value.
-fn protocol_id(name: &str) -> u8 {
+fn protocol_id(name: &str) -> Result<u8> {
     match name {
-        "aave_v3" => 0, // Protocol.AaveV3
-        "radiant" => 1, // Protocol.Radiant
-        "silo" => 2,    // Protocol.Silo
-        _ => 0,
+        "aave_v3" => Ok(0), // Protocol.AaveV3
+        "radiant" => Ok(1), // Protocol.Radiant
+        "silo" => Ok(2),    // Protocol.Silo
+        other => eyre::bail!("unsupported liquidation protocol '{other}'"),
     }
 }
 
@@ -202,20 +203,16 @@ fn build_swap_path(collateral: Address, debt: Address) -> Bytes {
 pub fn build_liquidation_params(
     opportunity: &LiquidationOpportunity,
     min_profit: U256,
-) -> IFlashLiquidator::LiquidationParams {
-    let proto = protocol_id(&opportunity.protocol);
+) -> Result<IFlashLiquidator::LiquidationParams> {
+    let proto = protocol_id(&opportunity.protocol)?;
     let fee = select_swap_fee(opportunity.collateral_asset, opportunity.debt_asset);
     let path = build_swap_path(opportunity.collateral_asset, opportunity.debt_asset);
 
-    // The swap converts collateral -> debt tokens. We need enough debt tokens back
-    // to repay the flash loan principal plus the flash loan premium (0.09%).
-    // This floor must stay at or above the full repayment amount; otherwise the
-    // swap can succeed but the flash loan settlement will still revert later.
-    let premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000); // 0.09%
-    let needed = opportunity.debt_to_cover + premium;
-    let min_amount_out = needed;
+    // Rust only encodes a principal floor here. The Solidity callback upgrades
+    // this to at least `amount + premium` using the actual flash-loan premium.
+    let min_amount_out = opportunity.debt_to_cover;
 
-    IFlashLiquidator::LiquidationParams {
+    Ok(IFlashLiquidator::LiquidationParams {
         protocol: proto,
         collateralAsset: opportunity.collateral_asset,
         debtAsset: opportunity.debt_asset,
@@ -227,7 +224,7 @@ pub fn build_liquidation_params(
         swapPath: path,
         siloAddress: Address::ZERO,
         minAmountOut: min_amount_out,
-    }
+    })
 }
 
 /// Encode calldata for `liquidateWithAaveFlashLoan(LiquidationParams)`.
@@ -235,20 +232,20 @@ pub fn build_liquidation_params(
 pub fn encode_aave_flash_liquidation(
     opportunity: &LiquidationOpportunity,
     min_profit: U256,
-) -> Bytes {
-    let params = build_liquidation_params(opportunity, min_profit);
+) -> Result<Bytes> {
+    let params = build_liquidation_params(opportunity, min_profit)?;
     let call = IFlashLiquidator::liquidateWithAaveFlashLoanCall { params };
-    Bytes::from(call.abi_encode())
+    Ok(Bytes::from(call.abi_encode()))
 }
 
 /// Encode calldata for `liquidateWithRadiantFlashLoan(LiquidationParams)`.
 pub fn encode_radiant_flash_liquidation(
     opportunity: &LiquidationOpportunity,
     min_profit: U256,
-) -> Bytes {
-    let params = build_liquidation_params(opportunity, min_profit);
+) -> Result<Bytes> {
+    let params = build_liquidation_params(opportunity, min_profit)?;
     let call = IFlashLiquidator::liquidateWithRadiantFlashLoanCall { params };
-    Bytes::from(call.abi_encode())
+    Ok(Bytes::from(call.abi_encode()))
 }
 
 /// Choose the best flash loan source and encode the transaction.
@@ -259,7 +256,7 @@ pub fn encode_flash_liquidation(
     opportunity: &LiquidationOpportunity,
     _flash_liquidator: Address,
     min_profit: U256,
-) -> Bytes {
+) -> Result<Bytes> {
     match opportunity.protocol.as_str() {
         "radiant" => encode_radiant_flash_liquidation(opportunity, min_profit),
         _ => encode_aave_flash_liquidation(opportunity, min_profit),
@@ -336,12 +333,8 @@ mod tests {
             health_factor: U256::from(900_000_000_000_000_000u128),
         };
 
-        let params = super::build_liquidation_params(&opportunity, U256::ZERO);
-        let expected_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000);
+        let params = super::build_liquidation_params(&opportunity, U256::ZERO).unwrap();
 
-        assert_eq!(
-            params.minAmountOut,
-            opportunity.debt_to_cover + expected_premium
-        );
+        assert_eq!(params.minAmountOut, opportunity.debt_to_cover);
     }
 }

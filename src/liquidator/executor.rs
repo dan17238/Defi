@@ -27,6 +27,8 @@ sol! {
 const LIQUIDATION_EXECUTED_TOPIC: FixedBytes<32> = LiquidationExecuted::SIGNATURE_HASH;
 const RECEIPT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const RECEIPT_MAX_POLLS: usize = 24;
+const RECEIPT_RECHECK_INTERVAL: Duration = Duration::from_secs(30);
+const RECEIPT_MAX_RECHECKS: usize = 20;
 
 /// Submits liquidation transactions on-chain without blocking for confirmation.
 ///
@@ -44,8 +46,16 @@ pub struct Executor<P> {
 }
 
 impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
-    pub fn new(provider: P, metrics: Metrics, telegram: Option<crate::utils::telegram::Telegram>) -> Self {
-        Self { provider, metrics, telegram }
+    pub fn new(
+        provider: P,
+        metrics: Metrics,
+        telegram: Option<crate::utils::telegram::Telegram>,
+    ) -> Self {
+        Self {
+            provider,
+            metrics,
+            telegram,
+        }
     }
 
     /// Build, sign, and send a transaction to the flash liquidator contract.
@@ -154,6 +164,65 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                 }
             }
 
+            if receipt.is_none() {
+                for attempt in 1..=RECEIPT_MAX_RECHECKS {
+                    match receipt_provider
+                        .get_transaction_receipt(tx_hash_for_task)
+                        .await
+                    {
+                        Ok(Some(found_receipt)) => {
+                            receipt = Some(found_receipt);
+                            break;
+                        }
+                        Ok(None) => match receipt_provider
+                            .get_transaction_by_hash(tx_hash_for_task)
+                            .await
+                        {
+                            Ok(Some(_)) => {
+                                debug!(
+                                    tx_hash = %tx_hash_for_task,
+                                    attempt,
+                                    "Liquidation tx still pending, keeping inflight lock"
+                                );
+                            }
+                            Ok(None) => {
+                                warn!(
+                                    tx_hash = %tx_hash_for_task,
+                                    attempt,
+                                    "Liquidation tx no longer visible and has no receipt; releasing inflight lock"
+                                );
+                                break;
+                            }
+                            Err(e) => {
+                                last_error = Some(e.to_string());
+                                warn!(
+                                    tx_hash = %tx_hash_for_task,
+                                    attempt,
+                                    error = %e,
+                                    "Failed to query liquidation tx after receipt timeout"
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            last_error = Some(e.to_string());
+                            warn!(
+                                tx_hash = %tx_hash_for_task,
+                                attempt,
+                                error = %e,
+                                "Receipt recheck failed for liquidation tx"
+                            );
+                        }
+                    }
+
+                    if receipt.is_some() {
+                        break;
+                    }
+                    if attempt < RECEIPT_MAX_RECHECKS {
+                        tokio::time::sleep(RECEIPT_RECHECK_INTERVAL).await;
+                    }
+                }
+            }
+
             match receipt {
                 Some(receipt) if receipt.status() => {
                     let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(
@@ -176,7 +245,12 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
                         "Liquidation tx confirmed"
                     );
                     if let Some(ref tg) = tg {
-                        tg.profit("清算", "liquidation", net_profit_usd, &format!("{tx_hash_for_task:#x}"));
+                        tg.profit(
+                            "清算",
+                            "liquidation",
+                            net_profit_usd,
+                            &format!("{tx_hash_for_task:#x}"),
+                        );
                     }
                 }
                 Some(receipt) => {

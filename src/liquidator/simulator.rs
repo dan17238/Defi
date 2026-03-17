@@ -111,6 +111,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         &self,
         opportunity: &LiquidationOpportunity,
         flash_liquidator: Address,
+        min_profit: U256,
     ) -> Result<SimulationResult> {
         debug!(
             protocol = %opportunity.protocol,
@@ -119,11 +120,8 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
         );
 
         // Encode the flash liquidation call
-        let calldata = flash_loan::encode_flash_liquidation(
-            opportunity,
-            flash_liquidator,
-            alloy::primitives::U256::ZERO,
-        );
+        let calldata =
+            flash_loan::encode_flash_liquidation(opportunity, flash_liquidator, min_profit)?;
 
         // Build the revm database:
         // AlloyDB (async, fetches state from RPC on cache miss)

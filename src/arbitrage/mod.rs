@@ -89,6 +89,8 @@ sol! {
 const ARB_EXECUTED_TOPIC: FixedBytes<32> = IFlashArbitrage::ArbitrageExecuted::SIGNATURE_HASH;
 const RECEIPT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 const RECEIPT_MAX_POLLS: usize = 24;
+const RECEIPT_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+const RECEIPT_MAX_RECHECKS: usize = 20;
 
 // ---------------------------------------------------------------------------
 // ArbitrageMonitor
@@ -365,6 +367,15 @@ where
     /// Uses bracket search (0.5x, 1x, 2x, 4x of heuristic amount) to find
     /// the most profitable trade size, then executes the best one.
     async fn process_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<()> {
+        let inflight_key = Self::opportunity_key(opp);
+        if !self.inflight.insert(inflight_key.clone()) {
+            debug!(
+                pair = %opp.pair_name,
+                "Skipping duplicate arbitrage while previous tx is still in flight"
+            );
+            return Ok(());
+        }
+
         self.dashboard
             .record_detected(&opp.pair_name, opp.estimated_profit_bps, 0.0);
 
@@ -372,6 +383,7 @@ where
             Ok(value) => value,
             Err(e) => {
                 warn!(pair = %opp.pair_name, error = %e, "Skipping arb with unsupported profit token");
+                self.inflight.remove(&inflight_key);
                 return Ok(());
             }
         };
@@ -417,17 +429,31 @@ where
             Some(pair) => pair,
             None => {
                 // All multipliers failed — try the seed one more time for dashboard recording
-                let calldata = self.encode_arb_calldata(opp, min_profit_tokens)?;
-                let sim = self
+                let calldata = match self.encode_arb_calldata(opp, min_profit_tokens) {
+                    Ok(cd) => cd,
+                    Err(e) => {
+                        self.inflight.remove(&inflight_key);
+                        return Err(e);
+                    }
+                };
+                let sim = match self
                     .simulate_arbitrage(calldata.clone(), opp)
                     .await
-                    .wrap_err("revm simulation failed")?;
+                    .wrap_err("revm simulation failed")
+                {
+                    Ok(sim) => sim,
+                    Err(e) => {
+                        self.inflight.remove(&inflight_key);
+                        return Err(e);
+                    }
+                };
                 self.dashboard.record_simulated(
                     &opp.pair_name,
                     sim.profit_usd,
                     sim.gas_used,
                     sim.reverted || !sim.profitable,
                 );
+                self.inflight.remove(&inflight_key);
                 return Ok(());
             }
         };
@@ -454,15 +480,7 @@ where
                 gas_gwei = sim_result.selected_gas_price_gwei,
                 "DRY RUN: would execute arbitrage"
             );
-            return Ok(());
-        }
-
-        let inflight_key = Self::opportunity_key(opp);
-        if !self.inflight.insert(inflight_key.clone()) {
-            debug!(
-                pair = %opp.pair_name,
-                "Skipping duplicate arbitrage while previous tx is still in flight"
-            );
+            self.inflight.remove(&inflight_key);
             return Ok(());
         }
 
@@ -744,6 +762,63 @@ where
 
                 if attempt < RECEIPT_MAX_POLLS {
                     tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
+                }
+            }
+
+            if receipt.is_none() {
+                for attempt in 1..=RECEIPT_MAX_RECHECKS {
+                    match receipt_provider.get_transaction_receipt(tx_hash).await {
+                        Ok(Some(found_receipt)) => {
+                            receipt = Some(found_receipt);
+                            break;
+                        }
+                        Ok(None) => match receipt_provider.get_transaction_by_hash(tx_hash).await {
+                            Ok(Some(_)) => {
+                                debug!(
+                                    pair = %pair_name,
+                                    tx = %tx_hash,
+                                    attempt,
+                                    "Arbitrage tx still pending, keeping inflight lock"
+                                );
+                            }
+                            Ok(None) => {
+                                warn!(
+                                    pair = %pair_name,
+                                    tx = %tx_hash,
+                                    attempt,
+                                    "Arbitrage tx no longer visible and has no receipt; releasing inflight lock"
+                                );
+                                break;
+                            }
+                            Err(e) => {
+                                last_error = Some(e.to_string());
+                                warn!(
+                                    pair = %pair_name,
+                                    tx = %tx_hash,
+                                    attempt,
+                                    error = %e,
+                                    "Failed to query arbitrage tx after receipt timeout"
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            last_error = Some(e.to_string());
+                            warn!(
+                                pair = %pair_name,
+                                tx = %tx_hash,
+                                attempt,
+                                error = %e,
+                                "Receipt recheck failed for arbitrage tx"
+                            );
+                        }
+                    }
+
+                    if receipt.is_some() {
+                        break;
+                    }
+                    if attempt < RECEIPT_MAX_RECHECKS {
+                        tokio::time::sleep(RECEIPT_RECHECK_INTERVAL).await;
+                    }
                 }
             }
 

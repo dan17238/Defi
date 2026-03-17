@@ -96,6 +96,7 @@ pub struct RadiantProtocol<P> {
     min_profit_usd: f64,
     position_tracker: PositionTracker,
     multicall_batch_size: usize,
+    discovery_start_block: AtomicU64,
 }
 
 /// Chainlink ETH/USD price feed on Arbitrum
@@ -116,6 +117,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
             min_profit_usd,
             position_tracker: PositionTracker::new(),
             multicall_batch_size,
+            discovery_start_block: AtomicU64::new(u64::MAX),
         }
     }
 
@@ -168,14 +170,34 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     }
 
     /// Fetch the list of all active reserves from the Radiant LendingPool.
-    pub async fn fetch_reserves_list(&self) -> Result<Vec<Address>> {
+    pub async fn fetch_reserves_list(&self, block_number: Option<u64>) -> Result<Vec<Address>> {
         let pool = IRadiantPool::new(self.pool_address, &self.provider);
-        let reserves = pool
-            .getReservesList()
-            .call()
-            .await
-            .wrap_err("Failed to fetch Radiant reserves list")?;
+        let call = pool.getReservesList();
+        let reserves = match block_number {
+            Some(block) => call
+                .block(block.into())
+                .call()
+                .await
+                .wrap_err("Failed to fetch Radiant reserves list")?,
+            None => call
+                .call()
+                .await
+                .wrap_err("Failed to fetch Radiant reserves list")?,
+        };
         Ok(reserves)
+    }
+
+    async fn discovery_start_block(&self) -> Result<u64> {
+        let cached = self.discovery_start_block.load(Ordering::Acquire);
+        if cached != u64::MAX {
+            return Ok(cached);
+        }
+
+        let start_block =
+            provider::find_contract_deployment_block(&self.provider, self.pool_address).await?;
+        self.discovery_start_block
+            .store(start_block, Ordering::Release);
+        Ok(start_block)
     }
 
     /// Batch-query health factors for tracked borrowers using Multicall3.
@@ -185,6 +207,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
     async fn batch_query_health_factors(
         &self,
         users: &[Address],
+        block_number: u64,
     ) -> Result<Vec<(Address, U256, U256)>> {
         if users.is_empty() {
             return Ok(Vec::new());
@@ -205,7 +228,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
                 })
                 .collect();
 
-            let raw_results = multicall.aggregate3(calls).await?;
+            let raw_results = multicall
+                .aggregate3_at_block(calls, Some(block_number))
+                .await?;
 
             for (i, raw) in raw_results.iter().enumerate() {
                 if raw.success {
@@ -236,8 +261,9 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         user: Address,
         health_factor: U256,
         _total_debt_eth: U256,
+        block_number: u64,
     ) -> Result<Option<LiquidationOpportunity>> {
-        let reserves = self.fetch_reserves_list().await?;
+        let reserves = self.fetch_reserves_list(Some(block_number)).await?;
         let data_provider = IRadiantDataProvider::new(self.data_provider_address, &self.provider);
 
         let mut best_collateral = Address::ZERO;
@@ -249,6 +275,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         for reserve in &reserves {
             let user_data = data_provider
                 .getUserReserveData(*reserve, user)
+                .block(block_number.into())
                 .call()
                 .await;
 
@@ -349,8 +376,7 @@ impl<P: Provider + Clone + Send + Sync> RadiantProtocol<P> {
         // Scan the last 2,400,000 blocks (~7 days on Arbitrum at ~250ms blocks)
         // to capture a broader set of active borrowers.
         let latest = provider::get_latest_block_number(&self.provider).await?;
-        let scan_range: u64 = 2_400_000;
-        let from_block = latest.saturating_sub(scan_range);
+        let from_block = self.discovery_start_block().await?;
 
         info!(
             protocol = "radiant",
@@ -442,7 +468,9 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
         );
 
         let threshold = U256::from(1_000_000_000_000_000_000u64);
-        let health_factors = self.batch_query_health_factors(&borrowers).await?;
+        let health_factors = self
+            .batch_query_health_factors(&borrowers, block_number)
+            .await?;
 
         let mut opportunities = Vec::new();
         for (user, hf, total_debt_eth) in health_factors {
@@ -456,7 +484,10 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
                     "Liquidatable Radiant position found"
                 );
 
-                match self.build_opportunity(user, hf, total_debt_eth).await {
+                match self
+                    .build_opportunity(user, hf, total_debt_eth, block_number)
+                    .await
+                {
                     Ok(Some(opp)) => opportunities.push(opp),
                     Ok(None) => {}
                     Err(e) => {
@@ -483,5 +514,9 @@ impl<P: Provider + Clone + Send + Sync> Protocol for RadiantProtocol<P> {
 
     async fn discover_borrowers(&self) -> Result<()> {
         self.discover_borrowers_from_events().await
+    }
+
+    fn should_rescan_on_event(&self, event: &crate::sequencer_feed::SequencerEvent) -> bool {
+        matches!(event.tx_to, Some(target) if target == self.pool_address)
     }
 }

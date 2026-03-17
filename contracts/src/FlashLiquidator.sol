@@ -172,8 +172,7 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
     /// @notice Execute a Silo liquidation funded by an AAVE v3 flash loan
     /// @dev Silo does not have its own flash loan; we borrow via AAVE v3
-    /// @param params The liquidation parameters (protocol must be Silo)
-    function liquidateSiloWithAaveFlashLoan(LiquidationParams calldata params) external onlyOwner {
+    function liquidateSiloWithAaveFlashLoan(LiquidationParams calldata) external view onlyOwner {
         revert("Silo not yet supported");
     }
 
@@ -283,12 +282,13 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
 
         require(asset == liqParams.debtAsset, "asset mismatch");
 
+        // Calculate total owed to the flash loan pool up front so swap slippage
+        // checks can use the real callback premium instead of a Rust-side guess.
+        uint256 totalOwed = amount + premium;
+
         // Execute the liquidation and swap collateral back to the debt token
         uint256 collateralReceived = _executeLiquidation(liqParams);
-        _swapCollateralToDebt(liqParams, collateralReceived);
-
-        // Calculate total owed to the flash loan pool
-        uint256 totalOwed = amount + premium;
+        _swapCollateralToDebt(liqParams, collateralReceived, totalOwed);
 
         // Approve the pool to pull back the owed amount
         IERC20(asset).forceApprove(pool, totalOwed);
@@ -397,7 +397,11 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
     /// @param params The liquidation parameters
     /// @param collateralAmount The amount of collateral to swap
     /// @return amountOut The amount of debt tokens received
-    function _swapCollateralToDebt(LiquidationParams memory params, uint256 collateralAmount)
+    function _swapCollateralToDebt(
+        LiquidationParams memory params,
+        uint256 collateralAmount,
+        uint256 totalOwed
+    )
         internal
         returns (uint256 amountOut)
     {
@@ -411,16 +415,18 @@ contract FlashLiquidator is IFlashLoanSimpleReceiver, IFlashLoanReceiver {
             return 0;
         }
 
+        uint256 minAmountOut = params.minAmountOut > totalOwed ? params.minAmountOut : totalOwed;
+
         // Use multi-hop path if provided, otherwise single-hop
         if (params.swapPath.length > 0 && params.swapDex == SwapHelper.DEX.UniswapV3) {
-            amountOut = SwapHelper.swapUniswapV3MultiHop(params.swapPath, collateralAmount, params.minAmountOut);
+            amountOut = SwapHelper.swapUniswapV3MultiHop(params.swapPath, collateralAmount, minAmountOut);
         } else {
             amountOut = SwapHelper.swap(
                 params.swapDex,
                 params.collateralAsset,
                 params.debtAsset,
                 collateralAmount,
-                params.minAmountOut,
+                minAmountOut,
                 params.swapFee
             );
         }

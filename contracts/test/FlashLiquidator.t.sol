@@ -382,14 +382,11 @@ contract FlashLiquidatorTest is Test {
     }
 
     function _createArbitrumFork() internal returns (bool) {
-        string memory rpcUrl;
+        string memory rpcUrl = "https://arb1.arbitrum.io/rpc";
 
         try vm.envString("ARBITRUM_RPC_URL") returns (string memory url) {
             rpcUrl = url;
-        } catch {
-            console2.log("Skipping fork test: ARBITRUM_RPC_URL not configured");
-            return false;
-        }
+        } catch {}
 
         vm.createSelectFork(rpcUrl);
         liquidator = new FlashLiquidator();

@@ -54,6 +54,15 @@ impl<'a, P: Provider + Send + Sync> Multicall<'a, P> {
     /// All calls are marked with allowFailure=true so one revert does not
     /// fail the entire batch.
     pub async fn aggregate3(&self, calls: Vec<(Address, Vec<u8>)>) -> Result<Vec<MulticallResult>> {
+        self.aggregate3_at_block(calls, None).await
+    }
+
+    /// Execute a batch of calls through Multicall3 at a specific block.
+    pub async fn aggregate3_at_block(
+        &self,
+        calls: Vec<(Address, Vec<u8>)>,
+        block_number: Option<u64>,
+    ) -> Result<Vec<MulticallResult>> {
         if calls.is_empty() {
             return Ok(Vec::new());
         }
@@ -70,11 +79,18 @@ impl<'a, P: Provider + Send + Sync> Multicall<'a, P> {
             .collect();
 
         let multicall = IMulticall3::new(MULTICALL3_ADDRESS, self.provider);
-        let raw_results = multicall
-            .aggregate3(mc_calls)
-            .call()
-            .await
-            .wrap_err("Multicall3.aggregate3 call failed")?;
+        let call = multicall.aggregate3(mc_calls);
+        let raw_results = match block_number {
+            Some(block) => call
+                .block(block.into())
+                .call()
+                .await
+                .wrap_err("Multicall3.aggregate3 call failed")?,
+            None => call
+                .call()
+                .await
+                .wrap_err("Multicall3.aggregate3 call failed")?,
+        };
 
         let results = raw_results
             .into_iter()

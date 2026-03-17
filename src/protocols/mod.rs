@@ -47,4 +47,13 @@ pub trait Protocol: Send + Sync {
     /// borrower list. Implementations should add discovered addresses to their
     /// internal position tracker.
     fn discover_borrowers(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+
+    /// Whether a sequencer event is relevant enough to trigger an eager rescan.
+    ///
+    /// Protocol monitors still have their periodic timer as a fallback. This
+    /// hook lets them ignore unrelated feed traffic instead of rescanning on
+    /// every sequencer message.
+    fn should_rescan_on_event(&self, _event: &crate::sequencer_feed::SequencerEvent) -> bool {
+        false
+    }
 }

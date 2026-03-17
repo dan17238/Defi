@@ -167,8 +167,8 @@ a.lk:hover{text-decoration:underline;color:var(--ac2)}
   </div>
   <div class="row">
     <div class="col" style="flex:3"><div class="c" style="padding:0 16px 10px"><div class="sh" style="padding-left:0">Sequencer 延迟</div><div class="spark" id="chart2"></div></div></div>
-    <div class="col" style="flex:2"><div class="c" style="height:100%"><div class="sh">AAVE v3</div>
-      <div class="inf"><span class="inf-k">Pool</span><span class="inf-v mono">0x794a...14aD</span></div>
+    <div class="col" style="flex:2"><div class="c" style="height:100%"><div class="sh">清算市场</div>
+      <div class="inf"><span class="inf-k">协议</span><span class="inf-v">Aave + Radiant</span></div>
       <div class="inf"><span class="inf-k">HF &lt; 1.5</span><span class="inf-v" id="aaveDanger" style="color:var(--o)">0</span></div>
       <div class="inf"><span class="inf-k">市场清算</span><span class="inf-v" id="aaveMkt">--</span></div>
       <div class="inf"><span class="inf-k">竞争 Bot</span><span class="inf-v" id="aaveBots">--</span></div>
@@ -491,11 +491,13 @@ function renderNear(){
       };
     });
   } else {
-    // Update HF and colors
+    // Update borrower data, HF, and colors in place to preserve motion.
     ps.forEach((p,i)=>{
       if(!bubblePositions[i])return;
       const hf=parseFloat(p.health_factor)||1.5;
       bubblePositions[i].hf=hf;
+      bubblePositions[i].user=p.user;
+      bubblePositions[i].user_full=p.user_full;
       bubblePositions[i].debt_usd=p.debt_usd;
       bubblePositions[i].collateral_usd=p.collateral_usd;
       const targetR=Math.max(18,Math.min(50,18+(debts[i]/maxDebt)*32));
@@ -701,7 +703,7 @@ function renderC2(){if(S.lat.length<2){$('chart2').innerHTML='<div style="height
 renderC2();
 
 // ─── Data fetchers ───
-async function probe(){try{const r=await fetch('/api/latency');if(!r.ok)return;const d=await r.json(),p=d.probes||{};const rd=p.read||{},ar=p.read_arb1||{},sq=p.sequencer||{},lo=p.local_node||{};const bk=lo.block||rd.block||ar.block;if(bk)$('blk').textContent=`#${bk.toLocaleString()}`;const src=lo.ms>0?lo:rd.ms>0?rd:ar,lbl=lo.ms>0?'IPC':rd.ms>0?'RPC':'arb1';if(src&&src.ms>=0){h('pR',`${src.ms}<span class="u">ms</span>`);$('pRs').textContent=lbl;$('pRs').style.color=lc(src.ms,2,30)}if(sq.ms>=0){h('pS',`${sq.ms}<span class="u">ms</span>`);$('pSs').style.color=lc(sq.ms,5,20);h('arbPS',`${sq.ms}<span class="u">ms</span>`);$('arbPSs').style.color=lc(sq.ms,5,20)}if(src&&src.ms>=0&&sq.ms>=0){const t=src.ms+2+.5+sq.ms;h('pT',`${t.toFixed(0)}<span class="u">ms</span>`);$('pTs').style.color=lc(t,8,20);$('pTs').textContent=t<=5?'极速':t<=10?'优秀':'偏高';const ta=src.ms+1+.4+sq.ms;h('arbPT',`${ta.toFixed(0)}<span class="u">ms</span>`);$('arbPTs').style.color=lc(ta,5,10);$('arbPTs').textContent=ta<=3.5?'极速':ta<=5?'优秀':'偏高'}if(lo.ms>0){$('nD').className='inf-d ok';$('nV').textContent='已同步'}if(rd.ms>=0)$('rpcV').textContent=`arb1 ${ar.ms||rd.ms}ms`;if(sq.ms>=0)$('fV').textContent=`seq ${sq.ms}ms`;if(d.history?.sequencer?.length>=2){S.lat=d.history.sequencer.slice(-60);renderC2()}}catch{}}
+async function probe(){try{const r=await fetch('/api/latency');if(!r.ok)return;const d=await r.json(),p=d.probes||{};const rd=p.read||{},ar=p.read_arb1||{},sq=p.sequencer||{},lo=p.local_node||{};const bk=lo.block||rd.block||ar.block;if(bk)$('blk').textContent=`#${bk.toLocaleString()}`;const src=lo.ms>0?lo:rd.ms>0?rd:ar,lbl=lo.ms>0?'IPC':rd.ms>0?'RPC':'arb1';if(src&&src.ms>=0){h('pR',`${src.ms}<span class="u">ms</span>`);$('pRs').textContent=lbl;$('pRs').style.color=lc(src.ms,2,30)}if(sq.ms>=0){h('pS',`${sq.ms}<span class="u">ms</span>`);$('pSs').style.color=lc(sq.ms,5,20);h('arbPS',`${sq.ms}<span class="u">ms</span>`);$('arbPSs').style.color=lc(sq.ms,5,20)}if(src&&src.ms>=0&&sq.ms>=0){const t=src.ms+2+.5+sq.ms;h('pT',`${t.toFixed(0)}<span class="u">ms</span>`);$('pTs').style.color=lc(t,8,20);$('pTs').textContent=t<=5?'极速':t<=10?'优秀':'偏高';const ta=src.ms+1+.4+sq.ms;h('arbPT',`${ta.toFixed(0)}<span class="u">ms</span>`);$('arbPTs').style.color=lc(ta,5,10);$('arbPTs').textContent=ta<=3.5?'极速':ta<=5?'优秀':'偏高'}if(lo.ms>0){$('nD').className='inf-d ok';$('nV').textContent='已同步'}const arbReadMs=ar.ms>=0?ar.ms:rd.ms;if(arbReadMs>=0)$('rpcV').textContent=`arb1 ${arbReadMs}ms`;if(sq.ms>=0)$('fV').textContent=`seq ${sq.ms}ms`;if(d.history?.sequencer?.length>=2){S.lat=d.history.sequencer.slice(-60);renderC2()}}catch{}}
 probe();setInterval(probe,2000);
 
 async function pollBot(){try{const r=await fetch('/api/metrics');if(!r.ok)return;const d=await r.json();

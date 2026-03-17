@@ -24,6 +24,7 @@ latest = {
 history = {'read': [], 'sequencer': [], 'total': []}
 MAX_HISTORY = 120
 conns = {}
+BOT_API_BASE = os.environ.get('BOT_API_BASE', 'http://127.0.0.1:3001')
 
 # Read HTML once at startup
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html')
@@ -88,6 +89,17 @@ def probe_loop():
         time.sleep(2)
 
 
+def proxy_bot_json(path, fallback):
+    try:
+        from urllib import request
+        with request.urlopen(f"{BOT_API_BASE}{path}", timeout=2) as resp:
+            if resp.status != 200:
+                return fallback
+            return json.loads(resp.read())
+    except Exception:
+        return fallback
+
+
 class Handler(BaseHTTPRequestHandler):
     # Disable reverse DNS lookup that causes hangs with external clients
     def address_string(self):
@@ -103,6 +115,43 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif self.path == '/api/chain':
             body = json.dumps(chain_data.get_state()).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Length', len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == '/api/metrics':
+            body = json.dumps(proxy_bot_json('/api/metrics', {
+                'status': 'offline',
+                'total_liquidations': 0,
+                'successful_liquidations': 0,
+                'total_profit_usd': 0.0,
+                'success_rate': 0.0,
+                'avg_latency_ms': 0.0,
+                'errors': 0,
+                'blocks_processed': 0,
+                'positions_scanned': 0,
+                'arb_attempts': 0,
+                'arb_successes': 0,
+                'arb_profit_usd': 0.0,
+                'uptime': '0d 0h 0m',
+                'uptime_secs': 0
+            })).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Length', len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == '/api/arb':
+            body = json.dumps(proxy_bot_json('/api/arb', {
+                'scans': 0,
+                'opportunities': 0,
+                'pairs': [],
+                'events': [],
+                'spread_history': []
+            })).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')

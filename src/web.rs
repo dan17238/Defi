@@ -6,11 +6,14 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::get;
 use axum::Router;
+use serde_json::Value;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
 use crate::arbitrage::dashboard::ArbDashboard;
 use crate::utils::metrics::Metrics;
+
+const PY_DASHBOARD_BASE: &str = "http://127.0.0.1:3000";
 
 /// Shared state accessible by all HTTP handlers.
 #[derive(Clone)]
@@ -35,8 +38,8 @@ pub async fn start_dashboard(
         .route("/api/metrics", get(api_metrics))
         .route("/api/health", get(api_health))
         .route("/api/arb", get(api_arb))
-        .route("/api/latency", get(api_latency_stub))
-        .route("/api/chain", get(api_chain_stub))
+        .route("/api/latency", get(api_latency))
+        .route("/api/chain", get(api_chain))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -70,21 +73,33 @@ async fn api_arb(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(state.arb_dashboard.to_json())
 }
 
-/// Stub for /api/latency — the Python dashboard server provides the real implementation.
-/// This prevents 404s when the Rust bot serves the dashboard directly.
-async fn api_latency_stub() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "probes": {},
-        "history": {"read": [], "sequencer": [], "total": []}
+async fn proxy_python_json(path: &str) -> Option<Value> {
+    let url = format!("{PY_DASHBOARD_BASE}{path}");
+    let resp = reqwest::get(url).await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<Value>().await.ok()
+}
+
+/// /api/latency — prefer the Python latency probe service, fall back to an empty payload.
+async fn api_latency() -> impl IntoResponse {
+    Json(proxy_python_json("/api/latency").await.unwrap_or_else(|| {
+        serde_json::json!({
+            "probes": {},
+            "history": {"read": [], "sequencer": [], "total": []}
+        })
     }))
 }
 
-/// Stub for /api/chain — the Python dashboard server provides the real implementation.
-async fn api_chain_stub() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "market_liquidations": [],
-        "competitors": [],
-        "near_liquidation": [],
-        "last_updated": 0
+/// /api/chain — prefer the Python chain-data service, fall back to an empty payload.
+async fn api_chain() -> impl IntoResponse {
+    Json(proxy_python_json("/api/chain").await.unwrap_or_else(|| {
+        serde_json::json!({
+            "market_liquidations": [],
+            "competitors": [],
+            "near_liquidation": [],
+            "last_updated": 0
+        })
     }))
 }

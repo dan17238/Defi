@@ -119,6 +119,11 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
             revert InvalidPoolPair();
         }
 
+        _sweepExecutionDust(token0A);
+        if (token1A != token0A) {
+            _sweepExecutionDust(token1A);
+        }
+
         _executing = true;
         _arbPoolA = params.poolA;
         _arbPoolB = params.poolB;
@@ -143,6 +148,22 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         uint256 n = params.pools.length;
         if (n < 2 || n > MAX_HOPS) revert InvalidRoute();
         if (params.zeroForOne.length != n) revert InvalidRoute();
+
+        address[] memory routeTokens = new address[](n * 2);
+        uint256 routeTokenCount = 0;
+        for (uint256 i = 0; i < n; i++) {
+            address hopToken0 = IUniswapV3Pool(params.pools[i]).token0();
+            address hopToken1 = IUniswapV3Pool(params.pools[i]).token1();
+            if (!_containsToken(routeTokens, routeTokenCount, hopToken0)) {
+                routeTokens[routeTokenCount++] = hopToken0;
+            }
+            if (!_containsToken(routeTokens, routeTokenCount, hopToken1)) {
+                routeTokens[routeTokenCount++] = hopToken1;
+            }
+        }
+        for (uint256 i = 0; i < routeTokenCount; i++) {
+            _sweepExecutionDust(routeTokens[i]);
+        }
 
         _executing = true;
         _hopCount = n;
@@ -356,5 +377,21 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         if (amount1Delta > 0) {
             IERC20(token1).safeTransfer(msg.sender, uint256(amount1Delta));
         }
+    }
+
+    function _sweepExecutionDust(address token) internal {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance > 0) {
+            IERC20(token).safeTransfer(owner, balance);
+        }
+    }
+
+    function _containsToken(address[] memory tokens, uint256 length, address token) internal pure returns (bool) {
+        for (uint256 i = 0; i < length; i++) {
+            if (tokens[i] == token) {
+                return true;
+            }
+        }
+        return false;
     }
 }

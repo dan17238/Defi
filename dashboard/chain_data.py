@@ -28,8 +28,9 @@ GET_USER_ACCOUNT_DATA_SELECTOR = '0xbf92857c'
 
 SCAN_BLOCKS = 500000  # ~35 hours, covers more liquidation events
 MAX_LIQUIDATIONS = 50
-MAX_BORROWERS = 200
+MAX_BORROWERS = 500
 HEALTH_FACTOR_THRESHOLD = 1.5
+MIN_ACTIONABLE_DEBT_USD = 1000.0
 UPDATE_INTERVAL = 30
 
 TOKENS = {
@@ -626,24 +627,33 @@ def _do_update():
             for addr, (success, hf, collateral, debt) in zip(addresses, health_results):
                 if success and 0 < hf < HEALTH_FACTOR_THRESHOLD and debt > 0:
                     if protocol == 'Radiant':
+                        collateral_usd_num = collateral / 1e18 * ETH_USD_APPROX
+                        debt_usd_num = debt / 1e18 * ETH_USD_APPROX
                         collateral_usd = _format_eth_base_value_as_usd(collateral)
                         debt_usd = _format_eth_base_value_as_usd(debt)
                     else:
+                        collateral_usd_num = collateral / 1e8
+                        debt_usd_num = debt / 1e8
                         collateral_usd = _format_usd(collateral)
                         debt_usd = _format_usd(debt)
 
-                    near_liquidation.append({
-                        'protocol': protocol,
-                        'user': _shorten_address(addr),
-                        'user_full': addr,
-                        'health_factor': f"{hf:.4f}",
-                        'health_factor_num': hf,
-                        'collateral_usd': collateral_usd,
-                        'debt_usd': debt_usd,
-                    })
+                    if debt_usd_num >= MIN_ACTIONABLE_DEBT_USD:
+                        near_liquidation.append({
+                            'protocol': protocol,
+                            'user': _shorten_address(addr),
+                            'user_full': addr,
+                            'health_factor': f"{hf:.4f}",
+                            'health_factor_num': hf,
+                            'collateral_usd': collateral_usd,
+                            'debt_usd': debt_usd,
+                            'debt_usd_num': debt_usd_num,
+                        })
 
-    # Sort by health factor ascending (closest to liquidation first)
-    near_liquidation.sort(key=lambda x: x['health_factor_num'])
+    # Sort by health factor ascending, then by debt descending so dust accounts
+    # do not crowd out more actionable positions near the threshold.
+    near_liquidation.sort(key=lambda x: (x['health_factor_num'], -x['debt_usd_num']))
+    for item in near_liquidation:
+        item.pop('debt_usd_num', None)
 
     # Update shared state
     with _lock:

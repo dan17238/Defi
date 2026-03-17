@@ -470,6 +470,8 @@ async fn run_protocol_monitor<Proto, R, E>(
     R: Provider + Clone + Send + Sync + 'static,
     E: Provider + Clone + Send + Sync + 'static,
 {
+    const FEED_RESCAN_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+
     // Run initial borrower discovery before entering the scan loop (Fix 6).
     info!(
         protocol = protocol.name(),
@@ -490,6 +492,7 @@ async fn run_protocol_monitor<Proto, R, E>(
     // Periodic borrower re-discovery interval (every 10 minutes) to catch new
     // borrowers that appeared after the initial startup scan.
     let mut discovery_interval = tokio::time::interval(std::time::Duration::from_secs(600));
+    let mut last_feed_scan = tokio::time::Instant::now() - FEED_RESCAN_DEBOUNCE;
 
     loop {
         tokio::select! {
@@ -532,13 +535,22 @@ async fn run_protocol_monitor<Proto, R, E>(
             // Sequencer feed triggered a rescan
             result = feed_rx.recv() => {
                 match result {
-                    Ok(_event) => {}
+                    Ok(event) => {
+                        if !protocol.should_rescan_on_event(&event) {
+                            continue;
+                        }
+                        if last_feed_scan.elapsed() < FEED_RESCAN_DEBOUNCE {
+                            continue;
+                        }
+                        last_feed_scan = tokio::time::Instant::now();
+                    }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!(
                             protocol = protocol.name(),
                             skipped = n,
                             "Protocol monitor lagged behind sequencer feed"
                         );
+                        last_feed_scan = tokio::time::Instant::now();
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         info!(protocol = protocol.name(), "Sequencer feed closed");

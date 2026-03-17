@@ -186,7 +186,7 @@ impl Metrics {
     pub fn success_rate(&self) -> f64 {
         let total = self.liquidation_count();
         if total == 0 {
-            return 100.0;
+            return 0.0;
         }
         (self.successful_count() as f64 / total as f64) * 100.0
     }

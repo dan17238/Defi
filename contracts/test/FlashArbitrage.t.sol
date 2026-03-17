@@ -396,10 +396,14 @@ contract FlashArbitrageTest is Test {
     // =========================================================================
 
     function test_reentrancy_reverts() public {
-        // If somehow executeArbitrage is called while already executing,
-        // it should revert with Reentrancy()
-        // This is tested by verifying the _executing flag logic
-        // Direct reentrancy via callback is prevented by the pool address checks
+        // `pendingOwner` and `_executing` are packed into slot 1. Set `_executing = true`.
+        vm.store(address(flashArb), bytes32(uint256(1)), bytes32(uint256(1) << 160));
+
+        FlashArbitrage.ArbParams memory params =
+            FlashArbitrage.ArbParams({poolA: address(poolA), poolB: address(poolB), zeroForOne: true, amountIn: 1e18, minProfit: 0});
+
+        vm.expectRevert(FlashArbitrage.Reentrancy.selector);
+        flashArb.executeArbitrage(params);
     }
 
     // =========================================================================
@@ -571,8 +575,8 @@ contract FlashArbitrageTest is Test {
         flashArb.executeMultiHop(params);
         uint256 ownerAfter = IERC20(t0).balanceOf(deployer);
 
-        assertEq(ownerAfter - ownerBefore, 0.5e18, "Only incremental profit should be paid out");
-        assertEq(IERC20(t0).balanceOf(address(flashArb)), dust, "Pre-existing dust should remain untouched");
+        assertEq(ownerAfter - ownerBefore, dust + 0.5e18, "Dust should be swept before execution and only new profit added");
+        assertEq(IERC20(t0).balanceOf(address(flashArb)), 0, "Contract should not retain old dust after execution");
     }
 
     /// @notice Multi-hop rejects invalid route length

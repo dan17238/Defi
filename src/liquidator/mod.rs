@@ -85,10 +85,43 @@ where
             "Processing liquidation opportunity"
         );
 
+        // Build the transaction thresholds before simulation so unsupported debt
+        // assets are filtered early and the simulator sees the exact same
+        // minProfit that the live transaction will use.
+        let one_dollar = match flash_loan::tokens::one_dollar_in_tokens(opportunity.debt_asset) {
+            Some(value) => value,
+            None => {
+                warn!(
+                    protocol = %opportunity.protocol,
+                    user = %opportunity.user,
+                    debt_asset = %opportunity.debt_asset,
+                    "Skipping opportunity with unsupported debt asset pricing"
+                );
+                return Ok(false);
+            }
+        };
+        let gas_buffer = one_dollar;
+        let config_min = flash_loan::tokens::usd_to_token_units(
+            opportunity.debt_asset,
+            self.config.min_profit_usd,
+        )
+        .unwrap_or(U256::ZERO);
+        let min_profit = gas_buffer + config_min;
+
+        let inflight_key = Self::opportunity_key(opportunity);
+        if !self.inflight.insert(inflight_key.clone()) {
+            info!(
+                protocol = %opportunity.protocol,
+                user = %opportunity.user,
+                "Skipping duplicate liquidation while previous tx is still in flight"
+            );
+            return Ok(false);
+        }
+
         // Step 1: Simulate
         let sim_result = self
             .simulator
-            .simulate_liquidation(opportunity, self.flash_liquidator_address)
+            .simulate_liquidation(opportunity, self.flash_liquidator_address, min_profit)
             .await;
 
         let sim_result = match sim_result {
@@ -100,6 +133,7 @@ where
                     error = %e,
                     "Simulation failed"
                 );
+                self.inflight.remove(&inflight_key);
                 self.metrics.record_error();
                 return Ok(false);
             }
@@ -120,6 +154,7 @@ where
                 user = %opportunity.user,
                 "Simulation shows unprofitable, skipping"
             );
+            self.inflight.remove(&inflight_key);
             return Ok(false);
         }
 
@@ -131,6 +166,7 @@ where
                 min = self.config.min_profit_usd,
                 "Profit below minimum threshold, skipping"
             );
+            self.inflight.remove(&inflight_key);
             return Ok(false);
         }
 
@@ -142,57 +178,18 @@ where
                 profit_usd = sim_result.profit_usd,
                 "DRY RUN: Would execute liquidation"
             );
+            self.inflight.remove(&inflight_key);
             return Ok(false);
         }
 
         // Build and send the transaction
         // Set minProfit to cover: flash loan premium + estimated gas cost + profit margin.
         // The on-chain contract will revert if actual profit is below this threshold.
-        //
-        // 1. Flash loan premium (0.09% for non-whitelisted borrowers)
-        let flash_loan_premium = opportunity.debt_to_cover * U256::from(9) / U256::from(10000);
-
-        // 2. Compute ~$1 worth in debt token units using centralized token registry.
-        //    This correctly handles all tokens (WETH, WBTC, DAI, ARB, LINK, stablecoins).
-        let one_dollar = match flash_loan::tokens::one_dollar_in_tokens(opportunity.debt_asset) {
-            Some(value) => value,
-            None => {
-                warn!(
-                    protocol = %opportunity.protocol,
-                    user = %opportunity.user,
-                    debt_asset = %opportunity.debt_asset,
-                    "Skipping opportunity with unsupported debt asset pricing"
-                );
-                return Ok(false);
-            }
-        };
-
-        // 2b. Gas buffer: ~$1 worth of the debt token
-        let gas_buffer = one_dollar;
-        // 3. Config minimum profit threshold in token terms.
-        //    Multiply by 10 then divide by 10 to preserve one decimal (e.g. 0.5 -> 5/10).
-        let config_min = flash_loan::tokens::usd_to_token_units(
-            opportunity.debt_asset,
-            self.config.min_profit_usd,
-        )
-        .unwrap_or(U256::ZERO);
-        let min_profit = flash_loan_premium + gas_buffer + config_min;
-
         let calldata = flash_loan::encode_flash_liquidation(
             opportunity,
             self.flash_liquidator_address,
             min_profit,
-        );
-
-        let inflight_key = Self::opportunity_key(opportunity);
-        if !self.inflight.insert(inflight_key.clone()) {
-            info!(
-                protocol = %opportunity.protocol,
-                user = %opportunity.user,
-                "Skipping duplicate liquidation while previous tx is still in flight"
-            );
-            return Ok(false);
-        }
+        )?;
 
         match self
             .executor

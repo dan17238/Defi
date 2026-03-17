@@ -148,7 +148,7 @@ pub struct ArbitrageRouteConfig {
 }
 
 fn default_dashboard_port() -> u16 {
-    3000
+    3001
 }
 
 impl AppConfig {
