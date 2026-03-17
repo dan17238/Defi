@@ -275,17 +275,38 @@ where
     }
 
     /// Main event loop: listens for sequencer feed events and shutdown signal.
+    ///
+    /// A minimum scan interval prevents overwhelming remote RPCs with Multicall
+    /// requests.  With a local IPC node the interval can be set to zero.
     pub async fn run(
         &self,
         feed_rx: &mut broadcast::Receiver<SequencerEvent>,
         shutdown_rx: &mut broadcast::Receiver<()>,
     ) {
+        // Minimum time between pool-state refreshes.  The sequencer feed fires
+        // per-tx (~4/sec on Arbitrum), but Multicall over remote RPC can't keep
+        // up.  This debounce collapses rapid events into at most one scan per
+        // interval.  With IPC the refresh is <0.3ms so the debounce won't matter.
+        const MIN_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+        let mut last_scan = Instant::now() - MIN_SCAN_INTERVAL;
+        let mut pending_event: Option<SequencerEvent> = None;
+
         loop {
             tokio::select! {
                 result = feed_rx.recv() => {
                     match result {
                         Ok(event) => {
-                            self.on_sequencer_event(&event).await;
+                            // Always keep the latest event, but only process if
+                            // enough time has elapsed since the last scan.
+                            pending_event = Some(event);
+
+                            if last_scan.elapsed() >= MIN_SCAN_INTERVAL {
+                                if let Some(ev) = pending_event.take() {
+                                    self.on_sequencer_event(&ev).await;
+                                    last_scan = Instant::now();
+                                }
+                            }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             warn!(skipped = n, "Arb monitor lagged behind sequencer feed");
@@ -294,6 +315,13 @@ where
                             info!("Sequencer feed closed, stopping arb monitor");
                             break;
                         }
+                    }
+                }
+                // Process any pending event after the debounce window elapses
+                _ = tokio::time::sleep(MIN_SCAN_INTERVAL.saturating_sub(last_scan.elapsed())), if pending_event.is_some() => {
+                    if let Some(ev) = pending_event.take() {
+                        self.on_sequencer_event(&ev).await;
+                        last_scan = Instant::now();
                     }
                 }
                 _ = shutdown_rx.recv() => {
