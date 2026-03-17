@@ -185,6 +185,6 @@ if __name__ == '__main__':
     time.sleep(3)
     print("Chain data fetcher started (updates every 30s)")
     port = 3000
-    srv = ThreadedServer(('0.0.0.0', port), Handler)
-    print(f"Dashboard: http://0.0.0.0:{port}")
+    srv = ThreadedServer(('127.0.0.1', port), Handler)
+    print(f"Dashboard: http://127.0.0.1:{port}")
     srv.serve_forever()
