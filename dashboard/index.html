@@ -155,7 +155,8 @@ a.tx-link:hover { text-decoration: underline; }
 
   <div class="sb-section">
     <div class="sb-section-title">连接</div>
-    <div class="sb-row"><span class="sb-row-k"><span class="sb-dot on" id="feedDot"></span>扫描延迟</span><span class="sb-row-v" id="scanLatency">--</span></div>
+    <div class="sb-row"><span class="sb-row-k"><span class="sb-dot on" id="feedDot"></span>扫描</span><span class="sb-row-v" id="scanLatency">--</span></div>
+    <div class="sb-row"><span class="sb-row-k"><span class="sb-dot on" id="sendDot"></span>发送</span><span class="sb-row-v" id="sendLatency">--</span></div>
   </div>
 
   <div class="sb-section">
@@ -326,8 +327,16 @@ function updateSidebar() {
     setText('scanLatency', scanLat < 1 ? scanLat.toFixed(2) + 'ms' : scanLat.toFixed(1) + 'ms');
     document.getElementById('feedDot').className = 'sb-dot on';
   } else {
-    setText('scanLatency', '等待');
+    setText('scanLatency', '--');
     document.getElementById('feedDot').className = 'sb-dot off';
+  }
+  const sendLat = m.avg_latency_ms;
+  if (sendLat > 0) {
+    setText('sendLatency', sendLat.toFixed(0) + 'ms');
+    document.getElementById('sendDot').className = 'sb-dot on';
+  } else {
+    setText('sendLatency', '--');
+    document.getElementById('sendDot').className = 'sb-dot off';
   }
 }
 
