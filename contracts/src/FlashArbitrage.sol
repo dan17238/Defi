@@ -215,6 +215,11 @@ contract FlashArbitrage is IUniswapV3SwapCallback {
         _swapCallback(amount0Delta, amount1Delta, data);
     }
 
+    /// @notice Camelot V3 (Algebra) swap callback — identical semantics, different function name
+    function algebraSwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
+        _swapCallback(amount0Delta, amount1Delta, data);
+    }
+
     function _swapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
         if (!_executing) revert InvalidCallback();
 
