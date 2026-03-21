@@ -336,24 +336,34 @@ function updateOverview() {
 
 function updateBestOpp() {
   const pairs = arbData.pairs || [];
-  const profitable = pairs.filter(p => p.profitable);
-  profitable.sort((a,b) => b.spread_bps - a.spread_bps);
-  const el = document.getElementById('bestOpp');
-  if (profitable.length === 0) {
-    el.innerHTML = '<div class="best-none">当前无可执行机会</div>';
+  if (pairs.length === 0) {
+    document.getElementById('bestOpp').innerHTML = '<div class="best-none">等待池子数据...</div>';
     return;
   }
-  const best = profitable[0];
-  const ratio = Math.min(best.spread_bps / Math.max(best.fee_threshold_bps, 1) * 100, 200);
+
+  // Find best pair (profitable first, then highest spread)
+  const sorted = [...pairs].sort((a,b) => {
+    if (a.profitable !== b.profitable) return a.profitable ? -1 : 1;
+    return b.spread_bps - a.spread_bps;
+  });
+  const best = sorted[0];
+  const ratio = Math.min(best.spread_bps / Math.max(best.fee_threshold_bps, 0.1) * 100, 200);
+  const isProfitable = best.profitable;
+  const el = document.getElementById('bestOpp');
+
+  const statusHtml = isProfitable
+    ? '<span style="color:var(--green);font-weight:600">可执行</span>'
+    : `<span style="color:var(--fg3)">距阈值 ${(best.fee_threshold_bps - best.spread_bps).toFixed(1)} bps</span>`;
+
   el.innerHTML = `
-    <div>
+    <div style="flex:1">
       <div class="best-pair">${esc(best.name)}</div>
-      <div class="best-detail">${esc(best.path || best.kind)}</div>
+      <div class="best-detail">${statusHtml}</div>
     </div>
     <div class="best-divider"></div>
-    <div>
-      <div class="best-spread">${best.spread_bps.toFixed(1)}<span class="best-spread-unit">bps</span></div>
-      <div class="best-detail">阈值 ${best.fee_threshold_bps.toFixed(1)} bps · ${ratio.toFixed(0)}%</div>
+    <div style="text-align:right">
+      <div class="best-spread" style="color:${isProfitable ? 'var(--green)' : 'var(--fg)'}">${best.spread_bps.toFixed(1)}<span class="best-spread-unit">bps</span></div>
+      <div class="best-detail">/ ${best.fee_threshold_bps.toFixed(1)} bps · ${ratio.toFixed(0)}%</div>
     </div>`;
 }
 
@@ -361,7 +371,15 @@ function updateEventList() {
   const events = (arbData.events || []).slice(0, 30);
   const el = document.getElementById('eventList');
   document.getElementById('eventCount').textContent = events.length + ' 条';
-  if (events.length === 0) { el.innerHTML = '<div class="empty-cell">等待事件...</div>'; return; }
+  if (events.length === 0) {
+    const scans = fmtNum(arbData.scans || 0);
+    const pairs = (arbData.pairs || []).length;
+    el.innerHTML = `<div class="empty-cell" style="padding:24px;line-height:2">
+      正在扫描中 · ${scans} 次扫描 · ${pairs} 个池对监控<br>
+      <span style="font-size:11px">检测到可执行机会时事件将显示在此</span>
+    </div>`;
+    return;
+  }
 
   const kindMap = {
     detected: {cls:'det', label:'检测'},
