@@ -266,6 +266,7 @@ a.tx-link:hover { text-decoration: underline; }
 let arbData = null, metricsData = null;
 let pnlHistory = []; // [{ts, profit_usd}]
 let pnlRange = '1h';
+let apiLatencyMs = 0;
 
 // ── Tab navigation ──
 document.querySelectorAll('.sb-tab').forEach(btn => {
@@ -280,10 +281,12 @@ document.querySelectorAll('.sb-tab').forEach(btn => {
 // ── Data fetching ──
 async function fetchData() {
   try {
+    const t0 = performance.now();
     const [arbRes, metRes] = await Promise.all([
       fetch('/api/arb').then(r => r.json()),
       fetch('/api/metrics').then(r => r.json()),
     ]);
+    apiLatencyMs = Math.round(performance.now() - t0);
     arbData = arbRes;
     metricsData = metRes;
     updateSidebar();
@@ -320,11 +323,18 @@ function updateSidebar() {
   setText('liqCount', m.total_liquidations || 0);
   setText('aaveBorrowers', (m.positions_scanned || 0) + ' 仓位');
   // Connection
+  setText('nodeLatency', apiLatencyMs + 'ms');
+  const nodeDot = document.getElementById('nodeDot');
+  nodeDot.className = 'sb-dot ' + (apiLatencyMs < 500 ? 'on' : 'off');
+
   const avgLat = m.avg_latency_ms;
-  if (avgLat > 0) {
-    setText('seqLatency', avgLat.toFixed(0) + 'ms');
-  }
-  setText('feedStatus', a.scans > 0 ? '正常' : '等待');
+  setText('seqLatency', avgLat > 0 ? avgLat.toFixed(0) + 'ms' : '待发送');
+  const seqDot = document.getElementById('seqDot');
+  seqDot.className = 'sb-dot ' + (avgLat > 0 ? 'on' : 'on');
+
+  const feedOk = a.scans > 0;
+  setText('feedStatus', feedOk ? '正常' : '等待');
+  document.getElementById('feedDot').className = 'sb-dot ' + (feedOk ? 'on' : 'off');
 }
 
 // ── Overview page ──
