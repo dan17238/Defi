@@ -107,6 +107,9 @@ a.tx-link:hover { text-decoration: underline; }
 .pool-tag { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
 .pool-tag.active { color: var(--green); background: rgba(63,185,80,0.1); }
 .pool-tag.idle { color: var(--fg3); background: var(--bg3); }
+.pool-item { border-bottom: 1px solid var(--bg); }
+.pool-item:hover { background: rgba(255,255,255,0.02); }
+.pool-detail { padding: 0 16px 8px; font-size: 11px; color: var(--fg3); font-family: var(--mono); display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* PnL chart (canvas) */
 .chart-wrap { position: relative; height: 200px; }
@@ -528,14 +531,41 @@ function updatePools() {
     const cls = p.profitable ? 'pool-profitable' : 'pool-waiting';
     const tag = p.profitable ? '<span class="pool-tag active">有利可图</span>' : '<span class="pool-tag idle">等待</span>';
     const spreadColor = p.profitable ? 'var(--green)' : 'var(--fg2)';
-    return `<div class="pool-row ${cls}">
-      <div class="pool-name">${esc(p.name)}</div>
-      <div class="pool-bar-wrap"><div class="pool-bar"><div class="pool-bar-fill" style="width:${Math.min(ratio,100)}%"></div></div></div>
-      <div class="pool-spread" style="color:${spreadColor}">${p.spread_bps.toFixed(1)} <span style="font-size:10px;color:var(--fg3)">bps</span></div>
-      <div class="pool-threshold">/ ${p.fee_threshold_bps.toFixed(1)}</div>
-      ${tag}
+
+    // Second line: pool details
+    let detail = '';
+    if (p.kind === 'pair' && p.price_a > 0) {
+      detail = `<span>${fmtPoolAddr(p.pool_a)}</span> <span style="color:var(--fg3)">↔</span> <span>${fmtPoolAddr(p.pool_b)}</span>`;
+      detail += `<span style="margin-left:12px">价格 ${fmtPrice(p.price_a)} / ${fmtPrice(p.price_b)}</span>`;
+    } else if (p.kind === 'route') {
+      detail = `<span>${esc(p.path)}</span>`;
+    } else {
+      detail = `<span>${fmtPoolAddr(p.pool_a)}</span> <span style="color:var(--fg3)">↔</span> <span>${fmtPoolAddr(p.pool_b)}</span>`;
+    }
+
+    return `<div class="pool-item ${cls}">
+      <div class="pool-row">
+        <div class="pool-name">${esc(p.name)}</div>
+        <div class="pool-bar-wrap"><div class="pool-bar"><div class="pool-bar-fill" style="width:${Math.min(ratio,100)}%"></div></div></div>
+        <div class="pool-spread" style="color:${spreadColor}">${p.spread_bps.toFixed(1)} <span style="font-size:10px;color:var(--fg3)">bps</span></div>
+        <div class="pool-threshold">/ ${p.fee_threshold_bps.toFixed(1)}</div>
+        ${tag}
+      </div>
+      <div class="pool-detail">${detail}</div>
     </div>`;
   }).join('');
+}
+
+function fmtPoolAddr(addr) {
+  if (!addr || addr.length < 10) return addr || '--';
+  return addr.slice(0,6) + '..' + addr.slice(-4);
+}
+
+function fmtPrice(price) {
+  if (price === 0) return '--';
+  if (price >= 1000) return price.toFixed(2);
+  if (price >= 1) return price.toFixed(4);
+  return price.toFixed(6);
 }
 
 // ── Helpers ──
