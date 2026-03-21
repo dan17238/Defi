@@ -459,18 +459,25 @@ where
         // against the gas margin (the only remaining cost).
         let gas_margin = self.detector.gas_margin_bps();
         if opp.estimated_profit_bps > gas_margin * Self::FAST_FIRE_BPS_MULTIPLIER {
-            let result = self
-                .fast_fire_opportunity(opp, min_profit_tokens, &inflight_key)
-                .await;
-            // If fast-fire sent a tx (inflight key still present) or errored, done.
-            if result.is_err() || self.inflight.contains(&inflight_key) {
-                return result;
+            // Pre-check: is the estimated profit at least gas-positive?
+            let ff_gas_price_gwei =
+                select_gas_price(opp.estimated_profit_usd, self.config.max_gas_price_gwei);
+            let ff_gas_cost = crate::utils::gas::arbitrum_gas_cost_usd(
+                fast_fire_gas_estimate(opp.pools.len()),
+                (ff_gas_price_gwei * 1e9).round() as u128,
+            );
+            let ff_net = opp.estimated_profit_usd - ff_gas_cost;
+
+            if ff_net >= self.config.min_profit_usd {
+                // Clearly profitable — fast-fire immediately
+                return self
+                    .fast_fire_opportunity(opp, min_profit_tokens, &inflight_key)
+                    .await;
             }
-            // Fast-fire skipped (gas check removed inflight key).
-            // Re-insert and fall through to simulation for accurate gas estimate.
-            if !self.inflight.insert(inflight_key.clone()) {
-                return Ok(());
-            }
+            // Not profitable enough for fast-fire, skip entirely.
+            // Don't fall through to slow simulation for tiny/dead-pool spreads.
+            self.inflight.remove(&inflight_key);
+            return Ok(());
         }
 
         // Normal path: bracket search with parallel simulations
