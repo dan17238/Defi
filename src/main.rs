@@ -381,8 +381,17 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Send startup notification
+    if let Some(ref tg) = telegram {
+        let pair_count = config.arbitrage.as_ref().map(|a| a.pairs.len()).unwrap_or(0);
+        let route_count = config.arbitrage.as_ref().map(|a| a.routes.len()).unwrap_or(0);
+        tg.startup(pair_count, route_count);
+    }
+
     // --- Main event loop with block subscription reconnect ---
     let mut metrics_interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    let mut status_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+    status_interval.tick().await; // skip first immediate tick
     let ws_url = config.rpc.ws_url.clone();
 
     info!("Entering main event loop");
@@ -434,6 +443,44 @@ async fn main() -> Result<()> {
             // Periodic metrics logging
             _ = metrics_interval.tick() => {
                 metrics.log_summary();
+            }
+            // Hourly Telegram status report
+            _ = status_interval.tick() => {
+                if let Some(ref tg) = telegram {
+                    let arb_json = arb_dashboard.to_json();
+                    let pairs = arb_json["pairs"].as_array();
+                    let (best_name, best_spread, best_threshold) = pairs
+                        .and_then(|ps| ps.iter()
+                            .max_by(|a, b| a["spread_bps"].as_f64().unwrap_or(0.0)
+                                .partial_cmp(&b["spread_bps"].as_f64().unwrap_or(0.0))
+                                .unwrap_or(std::cmp::Ordering::Equal)))
+                        .map(|p| (
+                            p["name"].as_str().unwrap_or("--").to_string(),
+                            p["spread_bps"].as_f64().unwrap_or(0.0),
+                            p["fee_threshold_bps"].as_f64().unwrap_or(0.0),
+                        ))
+                        .unwrap_or(("--".to_string(), 0.0, 0.0));
+
+                    let uptime_secs = metrics.uptime_secs();
+                    let days = uptime_secs / 86400;
+                    let hours = (uptime_secs % 86400) / 3600;
+                    let mins = (uptime_secs % 3600) / 60;
+                    let uptime_str = format!("{}d {}h {}m", days, hours, mins);
+
+                    tg.status_report(
+                        &uptime_str,
+                        arb_json["scans"].as_u64().unwrap_or(0),
+                        arb_json["opportunities"].as_u64().unwrap_or(0),
+                        metrics.arb_count(),
+                        metrics.arb_successful_count(),
+                        metrics.arb_profit_usd(),
+                        metrics.positions_scanned(),
+                        metrics.error_count(),
+                        &best_name,
+                        best_spread,
+                        best_threshold,
+                    );
+                }
             }
             // Graceful shutdown on SIGINT (Ctrl+C)
             _ = signal::ctrl_c() => {

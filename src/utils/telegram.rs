@@ -75,6 +75,31 @@ impl Telegram {
             pairs, routes
         ));
     }
+
+    /// Convenience: periodic status report
+    pub fn status_report(
+        &self,
+        uptime: &str,
+        scans: u64,
+        opportunities: u64,
+        arb_attempts: u64,
+        arb_successes: u64,
+        arb_profit_usd: f64,
+        positions: u64,
+        errors: u64,
+        best_pair: &str,
+        best_spread: f64,
+        best_threshold: f64,
+    ) {
+        let pnl_icon = if arb_profit_usd > 0.0 { "\u{1F4B0}" } else { "\u{1F4CA}" };
+        self.notify(format!(
+            "{} *MEV Bot 状态*\n运行: {} | Scans: {}\nPnL: *${:.2}* | 交易: {}/{}\n最佳价差: `{}` {:.1}/{:.1} bps\n借款人: {} | 错误: {}",
+            pnl_icon, uptime, scans,
+            arb_profit_usd, arb_successes, arb_attempts,
+            best_pair, best_spread, best_threshold,
+            positions, errors
+        ));
+    }
 }
 
 impl TelegramInner {
