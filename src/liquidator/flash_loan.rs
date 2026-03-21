@@ -95,7 +95,7 @@ pub mod tokens {
         if eth_price > 100.0 {
             eth_price
         } else {
-            3500.0
+            2150.0
         }
     }
 

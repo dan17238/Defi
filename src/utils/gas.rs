@@ -15,7 +15,7 @@ pub fn eth_price_usd() -> f64 {
     if eth_price > 100.0 {
         eth_price
     } else {
-        3500.0
+        2150.0
     }
 }
 

@@ -23,7 +23,7 @@ fn token_value_usd(amount: U256, token: Address) -> Option<f64> {
 
 /// Cached ETH price in USD cents (e.g., 350000 = $3500.00).
 /// Updated periodically from Chainlink oracle. Public so simulator can use it.
-pub static CACHED_ETH_PRICE_CENTS: AtomicU64 = AtomicU64::new(350_000); // default $3500
+pub static CACHED_ETH_PRICE_CENTS: AtomicU64 = AtomicU64::new(215_000); // default $2150
 
 // --------------------------------------------------------------------------
 // Radiant ABI definitions (AAVE v2 fork)
