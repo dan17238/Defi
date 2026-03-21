@@ -208,13 +208,12 @@ where
                 );
             }
             if state_a.fee != pair.fee_a || state_b.fee != pair.fee_b {
-                eyre::bail!(
-                    "Pair '{}': configured fees ({},{}) do not match on-chain fees ({},{})",
-                    pair.name,
-                    pair.fee_a,
-                    pair.fee_b,
-                    state_a.fee,
-                    state_b.fee
+                // Algebra pools (Camelot V3) have dynamic fees — warn but accept the on-chain value.
+                warn!(
+                    pair = %pair.name,
+                    config_fees = ?(pair.fee_a, pair.fee_b),
+                    onchain_fees = ?(state_a.fee, state_b.fee),
+                    "Configured fees differ from on-chain (dynamic fee pool?), using on-chain values"
                 );
             }
         }
