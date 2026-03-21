@@ -459,9 +459,18 @@ where
         // against the gas margin (the only remaining cost).
         let gas_margin = self.detector.gas_margin_bps();
         if opp.estimated_profit_bps > gas_margin * Self::FAST_FIRE_BPS_MULTIPLIER {
-            return self
+            let result = self
                 .fast_fire_opportunity(opp, min_profit_tokens, &inflight_key)
                 .await;
+            // If fast-fire sent a tx (inflight key still present) or errored, done.
+            if result.is_err() || self.inflight.contains(&inflight_key) {
+                return result;
+            }
+            // Fast-fire skipped (gas check removed inflight key).
+            // Re-insert and fall through to simulation for accurate gas estimate.
+            if !self.inflight.insert(inflight_key.clone()) {
+                return Ok(());
+            }
         }
 
         // Normal path: bracket search with parallel simulations
@@ -1403,10 +1412,10 @@ fn estimate_net_profit_after_gas(
 
 fn fast_fire_gas_estimate(hop_count: usize) -> u64 {
     match hop_count {
-        0 | 1 => 450_000,
-        2 => 450_000,
-        3 => 1_950_000,
-        _ => 3_000_000,
+        0 | 1 => 350_000,
+        2 => 350_000,
+        3 => 600_000,
+        _ => 1_000_000,
     }
 }
 
@@ -1430,8 +1439,8 @@ mod tests {
 
     #[test]
     fn fast_fire_gas_estimate_scales_with_hops() {
-        assert_eq!(fast_fire_gas_estimate(2), 450_000);
-        assert_eq!(fast_fire_gas_estimate(3), 1_950_000);
-        assert_eq!(fast_fire_gas_estimate(4), 3_000_000);
+        assert_eq!(fast_fire_gas_estimate(2), 350_000);
+        assert_eq!(fast_fire_gas_estimate(3), 600_000);
+        assert_eq!(fast_fire_gas_estimate(4), 1_000_000);
     }
 }

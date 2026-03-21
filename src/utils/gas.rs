@@ -1,8 +1,11 @@
 /// Conservative fixed L1 data posting cost on Arbitrum, in USD.
 ///
+/// Post EIP-4844, Arbitrum L1 data posting uses blobs which cost
+/// ~$0.0001-0.001 per tx. We use $0.005 as a conservative upper bound.
+///
 /// We use the same constant in both simulation and receipt accounting so net
 /// profit filtering and realized PnL stay on the same footing.
-pub const ARBITRUM_L1_DATA_FEE_USD: f64 = 0.03;
+pub const ARBITRUM_L1_DATA_FEE_USD: f64 = 0.005;
 
 /// Best-effort ETH/USD price used for gas-cost estimation.
 pub fn eth_price_usd() -> f64 {
