@@ -18,6 +18,8 @@ struct Inner {
     opportunity_count: AtomicU64,
     revert_count: AtomicU64,
     revert_gas_cost_usd_micros: AtomicU64,
+    /// Last scan latency in microseconds (feed event → scan complete).
+    last_scan_latency_us: AtomicU64,
 }
 
 const MAX_EVENTS: usize = 200;
@@ -71,6 +73,7 @@ impl ArbDashboard {
                 opportunity_count: AtomicU64::new(0),
                 revert_count: AtomicU64::new(0),
                 revert_gas_cost_usd_micros: AtomicU64::new(0),
+                last_scan_latency_us: AtomicU64::new(0),
             }),
         }
     }
@@ -182,6 +185,10 @@ impl ArbDashboard {
         self.inner.scan_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn record_scan_latency_us(&self, us: u64) {
+        self.inner.last_scan_latency_us.store(us, Ordering::Relaxed);
+    }
+
     pub fn update_pairs(&self, snapshots: Vec<ArbPairSnapshot>) {
         // Also record spread history
         let now = Self::now_ms();
@@ -230,6 +237,7 @@ impl ArbDashboard {
             "opportunities": self.inner.opportunity_count.load(Ordering::Relaxed),
             "revert_count": self.inner.revert_count.load(Ordering::Relaxed),
             "revert_gas_cost_usd": self.inner.revert_gas_cost_usd_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "scan_latency_ms": self.inner.last_scan_latency_us.load(Ordering::Relaxed) as f64 / 1000.0,
             "pairs": pairs,
             "events": events,
             "spread_history": spread_history,

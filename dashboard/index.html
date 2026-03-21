@@ -155,7 +155,7 @@ a.tx-link:hover { text-decoration: underline; }
 
   <div class="sb-section">
     <div class="sb-section-title">连接</div>
-    <div class="sb-row"><span class="sb-row-k"><span class="sb-dot on" id="feedDot"></span>交易延迟</span><span class="sb-row-v" id="seqLatency">--</span></div>
+    <div class="sb-row"><span class="sb-row-k"><span class="sb-dot on" id="feedDot"></span>扫描延迟</span><span class="sb-row-v" id="scanLatency">--</span></div>
   </div>
 
   <div class="sb-section">
@@ -321,9 +321,14 @@ function updateSidebar() {
   setText('liqCount', m.total_liquidations || 0);
   setText('aaveBorrowers', (m.positions_scanned || 0) + ' 仓位');
   // Connection
-  const avgLat = m.avg_latency_ms;
-  setText('seqLatency', avgLat > 0 ? avgLat.toFixed(0) + 'ms' : '待首笔交易');
-  document.getElementById('feedDot').className = 'sb-dot ' + (avgLat > 0 ? 'on' : 'on');
+  const scanLat = a.scan_latency_ms;
+  if (scanLat > 0) {
+    setText('scanLatency', scanLat < 1 ? scanLat.toFixed(2) + 'ms' : scanLat.toFixed(1) + 'ms');
+    document.getElementById('feedDot').className = 'sb-dot on';
+  } else {
+    setText('scanLatency', '等待');
+    document.getElementById('feedDot').className = 'sb-dot off';
+  }
 }
 
 // ── Overview page ──

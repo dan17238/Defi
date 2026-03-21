@@ -369,6 +369,8 @@ where
 
         // 2. Detect arbitrage opportunities (<0.1ms)
         self.dashboard.record_scan();
+        self.dashboard
+            .record_scan_latency_us(start.elapsed().as_micros() as u64);
         self.push_pair_snapshots();
         let opportunities = self.detector.scan_all_pairs(&self.pool_cache);
         if opportunities.is_empty() {
