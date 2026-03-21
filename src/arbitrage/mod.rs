@@ -3,6 +3,7 @@ pub mod detector;
 pub mod pairs;
 pub mod pool_state;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Semaphore;
@@ -119,6 +120,10 @@ pub struct ArbitrageMonitor<R, E> {
     inflight: Arc<DashSet<String>>,
     sim_semaphore: Arc<Semaphore>,
     telegram: Option<crate::utils::telegram::Telegram>,
+    /// Cached gas price in wei. Updated periodically, avoids RPC call per tx.
+    cached_gas_price_wei: AtomicU64,
+    /// Timestamp (unix secs) of last gas price fetch.
+    gas_price_updated_at: AtomicU64,
 }
 
 impl<R, E> ArbitrageMonitor<R, E>
@@ -258,6 +263,8 @@ where
             inflight: Arc::new(DashSet::new()),
             sim_semaphore: Arc::new(Semaphore::new(3)),
             telegram,
+            cached_gas_price_wei: AtomicU64::new(100_000_000), // 0.1 gwei default
+            gas_price_updated_at: AtomicU64::new(0),
         })
     }
 
@@ -276,12 +283,43 @@ where
         format!("{}:{}:{}", opp.pair_name, pools, directions)
     }
 
+    /// Refresh cached gas price if stale (>5 seconds old).
+    async fn refresh_gas_price_if_needed(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let last = self.gas_price_updated_at.load(Ordering::Relaxed);
+        if now.saturating_sub(last) < 5 {
+            return;
+        }
+        if let Ok(price) = self.exec_provider.get_gas_price().await {
+            self.cached_gas_price_wei
+                .store(price.min(u64::MAX as u128) as u64, Ordering::Relaxed);
+            self.gas_price_updated_at.store(now, Ordering::Relaxed);
+        }
+    }
+
+    /// Get cached gas price in wei.
+    fn gas_price_wei(&self) -> u128 {
+        self.cached_gas_price_wei.load(Ordering::Relaxed) as u128
+    }
+
     /// Main event loop: listens for sequencer feed events and shutdown signal.
+    /// Periodically refreshes gas price in background.
     pub async fn run(
         &self,
         feed_rx: &mut broadcast::Receiver<SequencerEvent>,
         shutdown_rx: &mut broadcast::Receiver<()>,
     ) {
+        // Pre-warm gas price cache
+        self.refresh_gas_price_if_needed().await;
+
+        // Keepalive: periodically refresh gas price (also keeps sequencer
+        // HTTP connection warm since the provider shares the connection pool).
+        let mut gas_tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        gas_tick.tick().await; // skip first immediate tick
+
         loop {
             tokio::select! {
                 result = feed_rx.recv() => {
@@ -297,6 +335,9 @@ where
                             break;
                         }
                     }
+                }
+                _ = gas_tick.tick() => {
+                    self.refresh_gas_price_if_needed().await;
                 }
                 _ = shutdown_rx.recv() => {
                     info!("Arb monitor received shutdown signal");
@@ -364,7 +405,7 @@ where
             async move {
                 let _permit = sem.acquire().await;
                 if let Err(e) = self.process_opportunity(&opp).await {
-                    debug!(pair = %opp.pair_name, error = %e, "Arbitrage opportunity not viable");
+                    warn!(pair = %opp.pair_name, error = ?e, "Arbitrage opportunity not viable");
                 }
             }
         }).collect();
@@ -378,9 +419,19 @@ where
         );
     }
 
+    /// High-spread threshold: if estimated_profit_bps exceeds this multiple of
+    /// the fee threshold, skip simulation and fire immediately for speed.
+    /// Revert cost on Arbitrum is ~$0.05, so the risk is minimal.
+    const FAST_FIRE_BPS_MULTIPLIER: f64 = 3.0;
+
     /// Simulate and execute a single arbitrage opportunity.
-    /// Uses bracket search (0.5x, 1x, 2x, 4x of heuristic amount) to find
-    /// the most profitable trade size, then executes the best one.
+    ///
+    /// Two paths:
+    /// - **Fast-fire**: If spread > 3x fee threshold, skip simulation and
+    ///   send immediately with the seed amount. Saves ~5-10ms at the cost of
+    ///   occasional reverts (~$0.05 each).
+    /// - **Normal**: Bracket search with 3 parallel revm simulations to find
+    ///   the optimal trade size.
     async fn process_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<()> {
         let inflight_key = Self::opportunity_key(opp);
         if !self.inflight.insert(inflight_key.clone()) {
@@ -403,10 +454,116 @@ where
             }
         };
 
+        // Fast-fire path: if net profit bps is well above the gas margin,
+        // the spread is large enough that simulation is unnecessary.
+        // estimated_profit_bps is already net of fees, so compare directly
+        // against the gas margin (the only remaining cost).
+        let gas_margin = self.detector.gas_margin_bps();
+        if opp.estimated_profit_bps > gas_margin * Self::FAST_FIRE_BPS_MULTIPLIER {
+            return self
+                .fast_fire_opportunity(opp, min_profit_tokens, &inflight_key)
+                .await;
+        }
+
+        // Normal path: bracket search with parallel simulations
+        self.simulate_and_execute(opp, min_profit_tokens, &inflight_key)
+            .await
+    }
+
+    /// Fast-fire: skip simulation, encode and send immediately.
+    async fn fast_fire_opportunity(
+        &self,
+        opp: &ArbitrageOpportunity,
+        min_profit_tokens: U256,
+        inflight_key: &String,
+    ) -> Result<()> {
+        let calldata = match self.encode_arb_calldata(opp, min_profit_tokens) {
+            Ok(cd) => cd,
+            Err(e) => {
+                self.inflight.remove(inflight_key);
+                return Err(e);
+            }
+        };
+
+        let gas_price_gwei =
+            select_gas_price(opp.estimated_profit_usd, self.config.max_gas_price_gwei);
+
+        // Sanity check: estimated profit after gas must still exceed min_profit_usd.
+        // Use a conservative estimate by route length so multi-hop fast-fire
+        // does not undercount gas and slip below the strategy floor.
+        let est_gas_cost = crate::utils::gas::arbitrum_gas_cost_usd(
+            fast_fire_gas_estimate(opp.pools.len()),
+            (gas_price_gwei * 1e9).round() as u128,
+        );
+        let est_net_profit = opp.estimated_profit_usd - est_gas_cost;
+        if est_net_profit < self.config.min_profit_usd {
+            debug!(
+                pair = %opp.pair_name,
+                est_profit = opp.estimated_profit_usd,
+                gas_cost = est_gas_cost,
+                "Fast-fire skipped: estimated net profit below threshold"
+            );
+            self.inflight.remove(inflight_key);
+            return Ok(());
+        }
+
+        info!(
+            pair = %opp.pair_name,
+            spread_bps = opp.estimated_profit_bps,
+            est_net_profit_usd = est_net_profit,
+            "FAST-FIRE: high spread, skipping simulation"
+        );
+
+        self.dashboard
+            .record_simulated(&opp.pair_name, opp.estimated_profit_usd, 0, false);
+
+        if self.config.dry_run {
+            info!(
+                pair = %opp.pair_name,
+                est_profit_usd = opp.estimated_profit_usd,
+                "DRY RUN: would fast-fire arbitrage"
+            );
+            self.inflight.remove(inflight_key);
+            return Ok(());
+        }
+
+        match self
+            .send_arb_tx(
+                calldata,
+                gas_price_gwei,
+                opp.pair_name.clone(),
+                opp.estimated_profit_usd,
+                inflight_key.to_string(),
+            )
+            .await
+        {
+            Ok(tx_hash) => {
+                self.metrics.record_arbitrage_attempt();
+                info!(
+                    pair = %opp.pair_name,
+                    tx = %tx_hash,
+                    "Fast-fire arbitrage submitted"
+                );
+            }
+            Err(e) => {
+                self.inflight.remove(inflight_key);
+                error!(pair = %opp.pair_name, error = %e, "Failed to submit fast-fire arb tx");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Normal path: bracket search with parallel simulations.
+    async fn simulate_and_execute(
+        &self,
+        opp: &ArbitrageOpportunity,
+        min_profit_tokens: U256,
+        inflight_key: &String,
+    ) -> Result<()> {
         // Bracket search: try multiple amounts around the heuristic seed.
-        // 3 multipliers with good spread; run simulations in parallel.
         let seed = opp.amount_in;
-        let multipliers: &[f64] = &[0.5, 1.5, 4.0];
+        let multipliers: &[f64] = &[0.5, 1.0, 1.5, 4.0];
 
         // 1. Prepare all candidates (fast, synchronous)
         let mut candidates: Vec<(ArbitrageOpportunity, Bytes)> = Vec::new();
@@ -452,7 +609,7 @@ where
                 let calldata = match self.encode_arb_calldata(opp, min_profit_tokens) {
                     Ok(cd) => cd,
                     Err(e) => {
-                        self.inflight.remove(&inflight_key);
+                        self.inflight.remove(inflight_key);
                         return Err(e);
                     }
                 };
@@ -463,7 +620,7 @@ where
                 {
                     Ok(sim) => sim,
                     Err(e) => {
-                        self.inflight.remove(&inflight_key);
+                        self.inflight.remove(inflight_key);
                         return Err(e);
                     }
                 };
@@ -473,7 +630,7 @@ where
                     sim.gas_used,
                     sim.reverted || !sim.profitable,
                 );
-                self.inflight.remove(&inflight_key);
+                self.inflight.remove(inflight_key);
                 return Ok(());
             }
         };
@@ -485,7 +642,6 @@ where
             false,
         );
 
-        // bracket search already ensured sim_result.profitable == true
         info!(
             pair = %opp.pair_name,
             profit_usd = sim_result.profit_usd,
@@ -500,7 +656,7 @@ where
                 gas_gwei = sim_result.selected_gas_price_gwei,
                 "DRY RUN: would execute arbitrage"
             );
-            self.inflight.remove(&inflight_key);
+            self.inflight.remove(inflight_key);
             return Ok(());
         }
 
@@ -511,7 +667,7 @@ where
                 sim_result.selected_gas_price_gwei,
                 opp.pair_name.clone(),
                 sim_result.profit_usd,
-                inflight_key.clone(),
+                inflight_key.to_string(),
             )
             .await
         {
@@ -525,7 +681,7 @@ where
                 );
             }
             Err(e) => {
-                self.inflight.remove(&inflight_key);
+                self.inflight.remove(inflight_key);
                 error!(pair = %opp.pair_name, error = %e, "Failed to submit arb tx");
                 self.metrics.record_error();
             }
@@ -609,9 +765,10 @@ where
             .kind(TxKind::Call(self.flash_arb_contract))
             .data(calldata.clone())
             .gas_limit(3_000_000)
-            .gas_price(100_000_000) // 0.1 gwei for sim
+            .gas_price(self.gas_price_wei())
             .value(U256::ZERO)
             .nonce(0)
+            .chain_id(Some(42161))
             .build_fill();
 
         let ctx: MainnetContext<SimDB<R>> = revm::context::Context {
@@ -620,7 +777,11 @@ where
                 number: U256::ZERO,
                 ..Default::default()
             },
-            cfg: revm::context::CfgEnv::new_with_spec(SpecId::CANCUN).with_chain_id(42161),
+            cfg: {
+                let mut cfg = revm::context::CfgEnv::new_with_spec(SpecId::CANCUN).with_chain_id(42161);
+                cfg.disable_nonce_check = true;
+                cfg
+            },
             journaled_state: revm::Journal::new(cache_db),
             chain: (),
             local: Default::default(),
@@ -634,9 +795,10 @@ where
             .kind(TxKind::Call(self.flash_arb_contract))
             .data(calldata)
             .gas_limit(3_000_000)
-            .gas_price(100_000_000)
+            .gas_price(self.gas_price_wei())
             .value(U256::ZERO)
             .nonce(0)
+            .chain_id(Some(42161))
             .build_fill();
 
         let result =
@@ -714,6 +876,7 @@ where
         let tx_request = TransactionRequest::default()
             .to(self.flash_arb_contract)
             .input(TransactionInput::new(calldata))
+            .gas_limit(3_000_000)
             .gas_price(gas_price_wei);
 
         let send_start = Instant::now();
@@ -875,7 +1038,13 @@ where
                     }
                     let net_profit_usd = gross_profit_usd.unwrap_or(0.0) - gas_cost_usd;
                     metrics.record_arbitrage_success(net_profit_usd);
-                    dash.record_confirmed(&pair_name, net_profit_usd, &tx_str, receipt.gas_used());
+                    dash.record_confirmed(
+                        &pair_name,
+                        net_profit_usd,
+                        &tx_str,
+                        receipt.gas_used(),
+                        gas_cost_usd,
+                    );
                     info!(
                         pair = %pair_name, tx = %tx_hash,
                         gas_used = receipt.gas_used(),
@@ -888,7 +1057,11 @@ where
                 }
                 Some(receipt) => {
                     metrics.record_error();
-                    dash.record_reverted(&pair_name, &tx_str, receipt.gas_used());
+                    let gas_cost_usd = crate::utils::gas::arbitrum_gas_cost_usd(
+                        receipt.gas_used(),
+                        receipt.effective_gas_price(),
+                    );
+                    dash.record_reverted(&pair_name, &tx_str, receipt.gas_used(), gas_cost_usd);
                     warn!(pair = %pair_name, tx = %tx_hash, gas_used = receipt.gas_used(), "Arb tx reverted on-chain");
                     if let Some(ref tg) = tg {
                         tg.revert("套利", &pair_name, &tx_str);
@@ -1229,9 +1402,18 @@ fn estimate_net_profit_after_gas(
     (selected_gas_price_gwei, gross_profit_usd - gas_cost_usd)
 }
 
+fn fast_fire_gas_estimate(hop_count: usize) -> u64 {
+    match hop_count {
+        0 | 1 => 450_000,
+        2 => 450_000,
+        3 => 1_950_000,
+        _ => 3_000_000,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{estimate_net_profit_after_gas, select_gas_price};
+    use super::{estimate_net_profit_after_gas, fast_fire_gas_estimate, select_gas_price};
 
     #[test]
     fn simulation_uses_same_high_profit_gas_tier_as_execution() {
@@ -1245,5 +1427,12 @@ mod tests {
         assert_eq!(select_gas_price(100.0, 0.2), 0.2);
         assert_eq!(select_gas_price(20.0, 2.0), 0.1);
         assert_eq!(select_gas_price(1.0, 2.0), 0.02);
+    }
+
+    #[test]
+    fn fast_fire_gas_estimate_scales_with_hops() {
+        assert_eq!(fast_fire_gas_estimate(2), 450_000);
+        assert_eq!(fast_fire_gas_estimate(3), 1_950_000);
+        assert_eq!(fast_fire_gas_estimate(4), 3_000_000);
     }
 }

@@ -17,3 +17,4 @@ contracts/lib/
 
 # OS
 .DS_Store
+config/prod.toml

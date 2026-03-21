@@ -203,8 +203,14 @@ impl PoolStateCache {
             };
 
             let liquidity: u128 = if results[base + 1].success {
-                IUniV3Pool::liquidityCall::abi_decode_returns(&results[base + 1].return_data)
-                    .unwrap_or(0)
+                match IUniV3Pool::liquidityCall::abi_decode_returns(&results[base + 1].return_data)
+                {
+                    Ok(v) => v,
+                    Err(_) => {
+                        tracing::warn!(pool = %addr, "Failed to decode liquidity, defaulting to 0");
+                        0
+                    }
+                }
             } else {
                 0
             };

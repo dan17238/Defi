@@ -153,6 +153,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             .gas_price(gas_price_wei)
             .value(U256::ZERO)
             .nonce(0)
+            .chain_id(Some(42161))
             .build_fill();
 
         // Use MainnetContext to fully specify the type parameters.
@@ -160,7 +161,11 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             let mut c: MainnetContext<SimDB<P>> = revm::context::Context {
                 tx: Default::default(),
                 block: Default::default(),
-                cfg: revm::context::CfgEnv::new_with_spec(SpecId::CANCUN).with_chain_id(42161),
+                cfg: {
+                    let mut cfg = revm::context::CfgEnv::new_with_spec(SpecId::CANCUN).with_chain_id(42161);
+                    cfg.disable_nonce_check = true;
+                    cfg
+                },
                 journaled_state: revm::Journal::new(cache_db),
                 chain: (),
                 local: Default::default(),
@@ -186,6 +191,7 @@ impl<P: Provider + Clone + Send + Sync> Simulator<P> {
             .gas_price(gas_price_wei)
             .value(U256::ZERO)
             .nonce(0)
+            .chain_id(Some(42161))
             .build_fill();
 
         let result =

@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MEV Bot Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/apexcharts@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.2/dist/apexcharts.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#0c0f14;--bg2:#12161e;--card:#171c28;--card2:#1c2233;--card-h:#1f2738;
-  --bd:rgba(255,255,255,.06);--bd2:rgba(255,255,255,.1);
+  --bg:#0a0e17;--bg2:#0f1520;--card:rgba(17,25,40,0.75);--card2:rgba(22,32,50,0.8);--card-h:rgba(30,42,60,0.6);
+  --bd:rgba(255,255,255,.06);--bd2:rgba(255,255,255,.12);
+  --blur:blur(16px);
   --t:#e8ecf4;--t2:#8a94a6;--t3:#505a6e;
   --ac:#6c5ce7;--ac2:#a29bfe;--ac-bg:rgba(108,92,231,.12);
   --g:#00cec9;--g2:#55efc4;--g-bg:rgba(0,206,201,.1);
@@ -18,353 +19,759 @@
   --p:#a29bfe;--p-bg:rgba(162,155,254,.1);
   --tl:#74b9ff;--tl-bg:rgba(116,185,255,.1);
   --sh:0 2px 8px rgba(0,0,0,.3);--sh2:0 8px 32px rgba(0,0,0,.4);
-  --rd:10px;--glow:0 0 20px rgba(108,92,231,.15);
+  --rd:12px;
+  --glow:0 0 20px rgba(108,92,231,.15);
+  --glow-ac:0 0 30px rgba(108,92,231,.2);
+  --glow-g:0 0 20px rgba(0,206,201,.3);
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t);-webkit-font-smoothing:antialiased;font-size:13px;line-height:1.5}
+
+/* Floating gradient orbs */
+body::before{
+  content:'';position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(ellipse 600px 600px at 15% 20%, rgba(108,92,231,.12), transparent),
+    radial-gradient(ellipse 500px 500px at 80% 30%, rgba(0,206,201,.08), transparent),
+    radial-gradient(ellipse 400px 400px at 50% 80%, rgba(255,118,117,.06), transparent);
+  animation:orbDrift 20s ease-in-out infinite alternate;
+}
+@keyframes orbDrift{
+  0%{background-position:0% 0%,100% 0%,50% 100%}
+  50%{background-position:10% 10%,90% 20%,40% 90%}
+  100%{background-position:5% 5%,85% 15%,55% 85%}
+}
+
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t);-webkit-font-smoothing:antialiased;font-size:13px;line-height:1.5;min-height:100vh}
 .mono{font-family:'JetBrains Mono',monospace;font-size:11px}
 
-/* ─── Nav ─── */
-.nav{position:sticky;top:0;z-index:100;background:rgba(12,15,20,.88);backdrop-filter:blur(20px);border-bottom:1px solid var(--bd);padding:0 28px;height:52px;display:flex;align-items:center;justify-content:space-between}
+/* Nav */
+.nav{position:sticky;top:0;z-index:100;background:rgba(10,14,23,.85);backdrop-filter:var(--blur);border-bottom:1px solid var(--bd);padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between}
 .nav-l{display:flex;align-items:center;gap:16px}
-.nav-brand{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--ac),var(--ac2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;display:flex;align-items:center;gap:8px}
-.nav-brand svg{width:22px;height:22px;stroke:var(--ac);-webkit-text-fill-color:initial}
-.nav-tabs{display:flex;gap:2px;background:var(--bg2);border-radius:8px;padding:3px}
-.nav-tabs button{border:none;background:transparent;font-family:inherit;font-size:12px;font-weight:500;color:var(--t3);padding:6px 20px;border-radius:6px;cursor:pointer;transition:all .2s}
-.nav-tabs button.on{background:var(--ac);color:#fff;box-shadow:0 2px 12px rgba(108,92,231,.3);font-weight:600}
-.nav-tabs button:hover:not(.on){color:var(--t2)}
+.nav-brand{font-size:17px;font-weight:800;background:linear-gradient(135deg,#6c5ce7,#a29bfe,#00cec9,#6c5ce7);background-size:300% 300%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;display:flex;align-items:center;gap:8px;animation:gradText 4s ease infinite}
+@keyframes gradText{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.nav-brand svg{width:22px;height:22px;stroke:var(--ac);-webkit-text-fill-color:initial;filter:drop-shadow(0 0 6px rgba(108,92,231,.5))}
 .nav-r{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--t2)}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
-.dot.on{background:var(--g);box-shadow:0 0 10px rgba(0,206,201,.5)}.dot.off{background:var(--r)}.dot.w{background:var(--o)}
+.dot.on{background:var(--g);box-shadow:0 0 10px rgba(0,206,201,.6),0 0 20px rgba(0,206,201,.3)}.dot.off{background:var(--r);box-shadow:0 0 10px rgba(255,118,117,.4)}.dot.w{background:var(--o);box-shadow:0 0 10px rgba(253,203,110,.4)}
 .tag{font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.06em}
-.tag.dry{background:var(--tl-bg);color:var(--tl);border:1px solid rgba(116,185,255,.2)}.tag.live{background:var(--g-bg);color:var(--g);border:1px solid rgba(0,206,201,.2)}
+.tag.dry{background:var(--tl-bg);color:var(--tl);border:1px solid rgba(116,185,255,.2)}.tag.live{background:var(--g-bg);color:var(--g);border:1px solid rgba(0,206,201,.2);box-shadow:0 0 12px rgba(0,206,201,.2)}
 
-/* ─── Layout ─── */
+/* Layout */
 .wrap{max-width:1480px;margin:0 auto;padding:20px 28px 60px}
-.page{display:none}.page.on{display:block}
-.grid{display:grid;gap:14px;margin-bottom:14px}
+.grid{display:grid;gap:16px;margin-bottom:16px}
 .g2{grid-template-columns:1fr 1fr}
 .g3{grid-template-columns:1fr 1fr 1fr}
-.g23{grid-template-columns:2fr 1fr}
 .g32{grid-template-columns:3fr 2fr}
-.g-full{grid-template-columns:1fr}
 
-/* ─── Card ─── */
-.c{background:var(--card);border:1px solid var(--bd);border-radius:var(--rd);overflow:hidden;transition:all .25s}
-.c:hover{border-color:var(--bd2);box-shadow:var(--glow)}
+/* Card - glassmorphism */
+.c{background:var(--card);backdrop-filter:var(--blur);border:1px solid var(--bd);border-radius:var(--rd);overflow:hidden;transition:all .3s ease}
+.c:hover{transform:translateY(-1px);border-color:var(--bd2);box-shadow:var(--glow-ac)}
 .c-head{padding:14px 18px 10px;display:flex;align-items:center;justify-content:space-between}
 .c-title{font-size:12px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.08em}
 .c-badge{font-size:10px;color:var(--t3)}
 .c-body{padding:0 18px 14px}
 
-/* ─── KPI Strip ─── */
-.kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0;background:var(--card);border:1px solid var(--bd);border-radius:var(--rd);overflow:hidden;margin-bottom:14px}
-.kpi{padding:16px 20px;border-right:1px solid var(--bd);position:relative}
-.kpi:last-child{border-right:none}
-.kpi-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
-.kpi-val{font-size:26px;font-weight:800;letter-spacing:-.04em;line-height:1}
+/* KPI Strip */
+.kpi-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:0;margin-bottom:16px}
+.kpi{background:var(--card);backdrop-filter:var(--blur);border:1px solid var(--bd);border-radius:var(--rd);padding:18px 20px;position:relative;overflow:hidden;transition:all .3s ease}
+.kpi:hover{transform:translateY(-1px);border-color:var(--bd2);box-shadow:var(--glow-ac)}
+.kpi-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.kpi-trend{font-size:11px;font-weight:700}
+.kpi-trend.up{color:var(--g);text-shadow:0 0 8px rgba(0,206,201,.5)}.kpi-trend.dn{color:var(--r);text-shadow:0 0 8px rgba(255,118,117,.5)}
+.kpi-val{font-size:28px;font-weight:800;letter-spacing:-.04em;line-height:1;transition:color .3s}
 .kpi-val .u{font-size:11px;font-weight:500;color:var(--t3);margin-left:2px}
 .kpi-sub{font-size:10px;color:var(--t2);margin-top:4px}
-.kpi-spark{position:absolute;bottom:0;right:10px;width:80px;height:32px;opacity:.6}
+.kpi-spark{position:absolute;bottom:0;right:0;width:90px;height:36px;opacity:.5;pointer-events:none}
+.kpi-border-green{border-left:3px solid var(--g)}
+.kpi-border-purple{border-left:3px solid var(--ac)}
+.kpi-border-blue{border-left:3px solid var(--tl)}
+.kpi-border-orange{border-left:3px solid var(--o)}
+.kpi-border-cyan{border-left:3px solid var(--g)}
+.kpi-border-pink{border-left:3px solid var(--r2)}
 
-/* ─── Pipeline ─── */
+/* Pipeline */
 .pipe{display:flex;align-items:stretch;padding:6px 0}
 .pipe-s{flex:1;text-align:center;padding:12px 4px;position:relative}
-.pipe-s:not(:last-child)::after{content:'→';position:absolute;right:-4px;top:50%;transform:translateY(-50%);color:var(--ac);opacity:.5;font-size:12px}
+.pipe-s:not(:last-child)::after{content:'\2192';position:absolute;right:-4px;top:50%;transform:translateY(-50%);color:var(--ac);opacity:.5;font-size:12px}
 .pipe-n{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.06em}
 .pipe-v{font-size:18px;font-weight:800;margin:4px 0;line-height:1;color:var(--t)}
 .pipe-v .u{font-size:9px;font-weight:500;color:var(--t3)}
 .pipe-t{font-size:9px;color:var(--t2)}
 
-/* ─── Infrastructure ─── */
+/* Infrastructure */
 .inf{display:flex;align-items:center;gap:10px;padding:9px 18px;border-bottom:1px solid var(--bd);font-size:12px}
 .inf:last-child{border-bottom:none}
 .inf-d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.inf-d.ok{background:var(--g);box-shadow:0 0 6px rgba(0,206,201,.4)}.inf-d.er{background:var(--r)}.inf-d.w{background:var(--o)}
+.inf-d.ok{background:var(--g);box-shadow:0 0 8px rgba(0,206,201,.5)}.inf-d.er{background:var(--r);box-shadow:0 0 8px rgba(255,118,117,.4)}.inf-d.w{background:var(--o);box-shadow:0 0 8px rgba(253,203,110,.4)}
 .inf-k{flex:1;color:var(--t2)}.inf-v{font-weight:600;color:var(--t)}
 
-/* ─── Tables ─── */
+/* Tables */
 .tb{width:100%;border-collapse:collapse}
-.tb th{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:10px 18px;border-bottom:1px solid var(--bd);background:var(--card2);position:sticky;top:0}
+.tb th{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:10px 18px;border-bottom:1px solid var(--bd);background:var(--card2);position:sticky;top:0;backdrop-filter:var(--blur)}
 .tb td{font-size:12px;padding:8px 18px;border-bottom:1px solid var(--bd);transition:background .15s}
 .tb tr:hover td{background:var(--card-h)}
 .tb-h{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--bd)}
 .tb-t{font-size:14px;font-weight:700}
 .empty-row{text-align:center;padding:32px;color:var(--t3);font-size:12px}
 
-/* ─── Pills & Tags ─── */
-.pill{font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;display:inline-block;border:none}
+/* Pills & Tags */
+.pill{font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;display:inline-block;border:none;cursor:pointer;font-family:inherit}
 .pill.ok{background:var(--g-bg);color:var(--g)}.pill.er{background:var(--r-bg);color:var(--r)}
 .pill.sm{background:var(--tl-bg);color:var(--tl)}.pill.w{background:var(--o-bg);color:var(--o)}
 .pill.p{background:var(--p-bg);color:var(--p)}.pill.det{background:var(--ac-bg);color:var(--ac2)}
-.pos{color:var(--g);font-weight:700}.neg{color:var(--r);font-weight:700}
+.pos{color:var(--g);font-weight:700;text-shadow:0 0 10px rgba(0,206,201,.3)}.neg{color:var(--r);font-weight:700;text-shadow:0 0 10px rgba(255,118,117,.3)}
 a.lk{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ac2);text-decoration:none;font-weight:500}
 a.lk:hover{text-decoration:underline;color:var(--ac)}
 
-/* ─── Pool Cards ─── */
-.pool-card{padding:14px 18px;border-bottom:1px solid var(--bd);transition:background .15s}
+/* Pool Cards */
+.pool-card{padding:14px 18px;border-bottom:1px solid var(--bd);transition:background .15s;cursor:pointer;position:relative}
 .pool-card:last-child{border-bottom:none}
 .pool-card:hover{background:var(--card-h)}
-.pool-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.pool-name{font-weight:700;font-size:13px}
-.pool-prices{display:flex;gap:16px;font-size:11px;color:var(--t2);margin-bottom:5px;flex-wrap:wrap}
+.pool-card.active{background:var(--card-h);border-left:3px solid var(--ac)}
+.pool-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.pool-name{font-weight:700;font-size:13px;flex:1;padding-right:8px;line-height:1.3}
+.pool-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.pool-spread-num{font-size:24px;font-weight:800;letter-spacing:-.04em;line-height:1}
+.pool-badge{font-size:9px;font-weight:700;padding:2px 8px;border-radius:12px;text-align:center}
+.pool-badge.prof{background:var(--g-bg);color:var(--g);border:1px solid rgba(0,206,201,.3)}
+.pool-badge.wait{background:var(--card2);color:var(--t3);border:1px solid var(--bd)}
+.pool-prices{display:flex;gap:12px;font-size:11px;color:var(--t2);margin-bottom:6px;flex-wrap:wrap}
 .pool-prices span{display:flex;align-items:center;gap:4px}
 .pool-prices .label{font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:600}
-.pool-spread-num{font-size:22px;font-weight:800;letter-spacing:-.03em}
-.spread-bar{height:5px;border-radius:3px;background:var(--bg2);position:relative;overflow:hidden;margin:6px 0}
-.spread-fill{height:100%;border-radius:3px;transition:width .4s ease}
+.spread-bar-wrap{position:relative;margin:4px 0 6px}
+.spread-bar-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-bottom:2px}
+.spread-bar{height:4px;border-radius:2px;background:var(--bg2);position:relative;overflow:hidden}
+.spread-fill{height:100%;border-radius:2px;transition:width .4s ease}
+.spread-bar-threshold{position:absolute;top:-1px;width:2px;height:6px;background:var(--t3);border-radius:1px;opacity:.7}
+.pool-sparkline{height:28px;width:100%;margin-top:4px}
 
-/* ─── Event dots ─── */
+/* Best Opportunity Widget */
+.best-opp{position:relative;overflow:hidden}
+.best-opp::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(108,92,231,.05),transparent);pointer-events:none}
+.best-opp.pulsing{border-color:rgba(0,206,201,.4);box-shadow:0 0 30px rgba(0,206,201,.15)}
+.best-opp.pulsing::after{content:'';position:absolute;inset:0;border-radius:var(--rd);box-shadow:0 0 0 0 rgba(0,206,201,.4);animation:pulse-ring 2s infinite}
+@keyframes pulse-ring{0%{box-shadow:0 0 0 0 rgba(0,206,201,.4)}70%{box-shadow:0 0 0 12px rgba(0,206,201,0)}100%{box-shadow:0 0 0 0 rgba(0,206,201,0)}}
+.opp-inner{display:flex;align-items:center;gap:24px;padding:18px 24px}
+.opp-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--t3);margin-bottom:4px}
+.opp-spread{font-size:48px;font-weight:800;letter-spacing:-.06em;line-height:1}
+.opp-unit{font-size:16px;font-weight:500;color:var(--t3);margin-left:4px}
+.opp-pair{font-size:18px;font-weight:700;color:var(--t)}
+.opp-profit{font-size:14px;font-weight:600;color:var(--g);margin-top:4px}
+.opp-divider{width:1px;height:60px;background:var(--bd2);flex-shrink:0}
+.opp-none{font-size:14px;color:var(--t3);font-weight:500}
+.pulse-dot{width:10px;height:10px;border-radius:50%;background:var(--g);box-shadow:0 0 0 0 rgba(0,206,201,.5),0 0 12px rgba(0,206,201,.4);animation:pulse-dot 1.5s infinite;flex-shrink:0}
+@keyframes pulse-dot{0%{box-shadow:0 0 0 0 rgba(0,206,201,.5),0 0 12px rgba(0,206,201,.4)}70%{box-shadow:0 0 0 8px rgba(0,206,201,0),0 0 12px rgba(0,206,201,.2)}100%{box-shadow:0 0 0 0 rgba(0,206,201,0),0 0 12px rgba(0,206,201,.4)}}
+.opp-static-dot{width:10px;height:10px;border-radius:50%;background:var(--t3);flex-shrink:0}
+
+/* Event Timeline */
 .ev-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0}
-.ev-dot.det{background:var(--ac2)}.ev-dot.sim{background:var(--tl)}.ev-dot.sub{background:var(--o)}.ev-dot.ok{background:var(--g)}.ev-dot.rev{background:var(--r)}.ev-dot.skip{background:var(--t3)}
+.ev-dot.det{background:var(--ac2);box-shadow:0 0 6px rgba(162,155,254,.4)}.ev-dot.sim{background:var(--tl)}.ev-dot.sub{background:var(--o)}.ev-dot.ok{background:var(--g);box-shadow:0 0 6px rgba(0,206,201,.4)}.ev-dot.rev{background:var(--r);box-shadow:0 0 6px rgba(255,118,117,.4)}.ev-dot.skip{background:var(--t3)}
+.ev-filters{display:flex;gap:4px}
 
-/* ─── Responsive ─── */
-@media(max-width:900px){.g2,.g3,.g23,.g32{grid-template-columns:1fr}.kpi-strip{grid-template-columns:repeat(3,1fr)}}
+/* Funnel */
+.funnel{display:flex;align-items:center;gap:0;padding:10px 18px;flex-wrap:wrap}
+.funnel-s{display:flex;flex-direction:column;align-items:center;padding:8px 12px;position:relative}
+.funnel-s:not(:last-child)::after{content:'\2192';position:absolute;right:-8px;top:50%;transform:translateY(-50%);color:var(--t3);font-size:11px}
+.funnel-icon{font-size:16px;margin-bottom:4px}
+.funnel-n{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.06em}
+.funnel-v{font-size:20px;font-weight:800;line-height:1.2;margin:2px 0}
+.funnel-p{font-size:9px;color:var(--t2)}
+
+/* Time Range Buttons */
+.time-btns{display:flex;gap:4px}
+.time-btn{font-size:10px;font-weight:600;padding:3px 10px;border-radius:6px;border:1px solid var(--bd);background:transparent;color:var(--t3);cursor:pointer;transition:all .15s;font-family:inherit}
+.time-btn.on{background:var(--ac-bg);color:var(--ac2);border-color:rgba(108,92,231,.3)}
+.time-btn:hover:not(.on){color:var(--t2);border-color:var(--bd2)}
+
+/* Spread History Controls */
+.spread-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toggle-all-btn{font-size:10px;font-weight:600;padding:3px 10px;border-radius:6px;border:1px solid var(--bd);background:transparent;color:var(--t2);cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+.toggle-all-btn:hover{color:var(--t);border-color:var(--bd2)}
+.hottest-badge{font-size:9px;font-weight:700;padding:2px 8px;border-radius:12px;background:linear-gradient(135deg,rgba(108,92,231,.3),rgba(0,206,201,.3));color:var(--g);border:1px solid rgba(0,206,201,.3);white-space:nowrap}
+
+/* Number Animate */
+@keyframes num-flash{0%{opacity:.5}100%{opacity:1}}
+.flash{animation:num-flash .3s ease}
+
+/* Responsive */
+@media(max-width:900px){.g2,.g3,.g32{grid-template-columns:1fr}.kpi-strip{grid-template-columns:repeat(2,1fr)}.opp-inner{flex-wrap:wrap}.opp-spread{font-size:36px}}
+
+/* Scrollbar */
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--t3);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--t2)}
 
-/* ─── ApexCharts dark overrides ─── */
-.apexcharts-tooltip{background:var(--card2)!important;border:1px solid var(--bd2)!important;color:var(--t)!important;border-radius:8px!important;box-shadow:var(--sh2)!important}
-.apexcharts-tooltip-title{background:var(--card)!important;border-bottom:1px solid var(--bd)!important;color:var(--t2)!important}
+/* ApexCharts dark overrides */
+.apexcharts-tooltip{background:var(--card2)!important;border:1px solid var(--bd2)!important;color:var(--t)!important;border-radius:8px!important;box-shadow:var(--sh2)!important;backdrop-filter:var(--blur)!important}
+.apexcharts-tooltip-title{background:rgba(10,14,23,.9)!important;border-bottom:1px solid var(--bd)!important;color:var(--t2)!important}
 .apexcharts-xaxistooltip,.apexcharts-yaxistooltip{background:var(--card2)!important;border:1px solid var(--bd)!important;color:var(--t)!important}
+.apexcharts-legend-text{font-size:11px!important;color:var(--t2)!important}
 </style>
 </head>
 <body>
+
+<!-- Nav Bar -->
 <nav class="nav">
   <div class="nav-l">
     <div class="nav-brand">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       MEV Bot
     </div>
-    <div class="nav-tabs">
-      <button class="on" onclick="switchTab('liq')">清算</button>
-      <button onclick="switchTab('arb')">套利</button>
-    </div>
   </div>
   <div class="nav-r">
     <span id="mode" class="tag dry">DRY-RUN</span>
+    <span id="ethPriceNav" style="color:var(--o);font-weight:600">ETH --</span>
     <span><span class="dot on" id="sDot"></span><span id="sText">连接中</span></span>
     <span class="mono" id="blk">#--</span>
+    <span id="liqUpNav" style="font-size:11px">--</span>
     <span id="clk">--:--:--</span>
   </div>
 </nav>
+
 <div class="wrap">
 
-<!-- ═══ TAB 1: 清算 ═══ -->
-<div id="pageLiq" class="page on">
-  <div class="kpi-strip">
-    <div class="kpi"><div class="kpi-label">清算净利润</div><div class="kpi-val pos" id="liqNetP">$0.00</div><div class="kpi-sub" id="liqNetE">0.000 ETH</div></div>
-    <div class="kpi"><div class="kpi-label">清算次数</div><div class="kpi-val" id="liqCount">0</div><div class="kpi-sub" id="liqSuccess">0 成功</div></div>
-    <div class="kpi"><div class="kpi-label">胜率</div><div class="kpi-val" id="liqWr">--<span class="u">%</span></div><div class="kpi-sub" id="liqWrd">--</div></div>
-    <div class="kpi"><div class="kpi-label">平均延迟</div><div class="kpi-val" id="liqLat">--<span class="u">ms</span></div><div class="kpi-sub">签名→发送</div></div>
-    <div class="kpi"><div class="kpi-label">运行时间</div><div class="kpi-val" id="liqUptime">--</div><div class="kpi-sub" id="liqErrs">0 错误</div></div>
-    <div class="kpi"><div class="kpi-label">区块</div><div class="kpi-val" id="liqBlocks">0</div><div class="kpi-sub" id="liqScanned">0 次扫描</div></div>
+<!-- 1. KPI Strip (6 cards) -->
+<div class="kpi-strip">
+  <div class="kpi kpi-border-green">
+    <div class="kpi-label">总利润 <span class="kpi-trend" id="k0t"></span></div>
+    <div class="kpi-val pos" id="liqNetP">$0.00</div>
+    <div class="kpi-sub" id="liqNetE">0.000 ETH</div>
+    <svg class="kpi-spark" id="spark0" viewBox="0 0 90 36" preserveAspectRatio="none"></svg>
   </div>
-
-  <!-- P&L Chart + Infrastructure -->
-  <div class="grid g32">
-    <div class="c"><div class="c-head"><span class="c-title">利润趋势</span><span class="c-badge" id="pnlUpdated">--</span></div><div id="pnlChart" style="height:220px"></div></div>
-    <div class="c">
-      <div class="c-head"><span class="c-title">基础设施</span></div>
-      <div class="inf"><div class="inf-d w" id="nD"></div><span class="inf-k">本地节点</span><span class="inf-v" id="nV">同步中</span></div>
-      <div class="inf"><div class="inf-d ok" id="fD"></div><span class="inf-k">Seq Feed</span><span class="inf-v" id="fV">--</span></div>
-      <div class="inf"><div class="inf-d er" id="bD"></div><span class="inf-k">Bot</span><span class="inf-v" id="bV">未启动</span></div>
-      <div class="inf"><div class="inf-d ok"></div><span class="inf-k">RPC</span><span class="inf-v mono" id="rpcV">--</span></div>
-      <div style="padding:14px 18px 10px"><div class="c-title" style="margin-bottom:8px">延迟链路</div><div class="pipe">
-        <div class="pipe-s"><div class="pipe-n">读取</div><div class="pipe-v" id="pR">&lt;1<span class="u">ms</span></div><div class="pipe-t" id="pRs">RPC</div></div>
-        <div class="pipe-s"><div class="pipe-n">模拟</div><div class="pipe-v">~2<span class="u">ms</span></div><div class="pipe-t" style="color:var(--tl)">revm</div></div>
-        <div class="pipe-s"><div class="pipe-n">发送</div><div class="pipe-v" id="pS">--<span class="u">ms</span></div><div class="pipe-t" id="pSs">seq</div></div>
-        <div class="pipe-s"><div class="pipe-n">总计</div><div class="pipe-v" id="pT">--<span class="u">ms</span></div><div class="pipe-t" id="pTs">--</div></div>
-      </div></div>
-    </div>
+  <div class="kpi kpi-border-purple">
+    <div class="kpi-label">套利利润 <span class="kpi-trend" id="k2t"></span></div>
+    <div class="kpi-val" id="arbOnlyP" style="color:var(--ac2)">$0.00</div>
+    <div class="kpi-sub" id="arbOnlyCount">0 笔套利</div>
   </div>
-
-  <!-- Latency Chart + Market -->
-  <div class="grid g2">
-    <div class="c"><div class="c-head"><span class="c-title">Sequencer 延迟</span></div><div id="latencyChart" style="height:180px"></div></div>
-    <div class="c"><div class="c-head"><span class="c-title">健康因子分布</span><span class="c-badge" id="nearCount">0 个危险仓位</span></div><div id="hfChart" style="height:180px"></div></div>
+  <div class="kpi kpi-border-blue">
+    <div class="kpi-label">处理区块</div>
+    <div class="kpi-val" id="liqBlocks">0</div>
+    <div class="kpi-sub" id="liqErrs">0 错误</div>
   </div>
-
-  <!-- Trades + Competitors -->
-  <div class="grid g2">
-    <div class="c"><div class="tb-h"><div class="tb-t" id="tradeTitle">交易记录</div></div>
-      <div style="max-height:260px;overflow-y:auto"><table class="tb"><thead><tr><th>时间</th><th>对</th><th>利润</th><th>Gas</th><th>状态</th><th>TX</th></tr></thead><tbody id="tbTrades"></tbody></table></div></div>
-    <div class="c"><div class="tb-h"><div class="tb-t" id="botTitle">竞争对手</div></div>
-      <div style="max-height:260px;overflow-y:auto"><table class="tb"><thead><tr><th>#</th><th>地址</th><th>次数</th><th>协议</th><th>最近</th></tr></thead><tbody id="tbBots"></tbody></table></div></div>
+  <div class="kpi kpi-border-orange">
+    <div class="kpi-label">监控仓位</div>
+    <div class="kpi-val" id="positionsKpi">0</div>
+    <div class="kpi-sub">仓位数量</div>
   </div>
-
-  <!-- Market Liquidations -->
-  <div class="c"><div class="tb-h"><div class="tb-t" id="mktTitle">市场清算</div></div>
-    <div style="max-height:260px;overflow-y:auto"><table class="tb"><thead><tr><th>时间</th><th>被清算</th><th>清算人</th><th>对</th><th>债务额</th><th>抵押额</th><th>TX</th></tr></thead><tbody id="tbMkt"></tbody></table></div></div>
+  <div class="kpi kpi-border-cyan">
+    <div class="kpi-label">扫描/机会</div>
+    <div class="kpi-val" id="arbScans">0</div>
+    <div class="kpi-sub" id="arbOpps">0 个机会</div>
+  </div>
+  <div class="kpi kpi-border-pink">
+    <div class="kpi-label">提交/确认</div>
+    <div class="kpi-val" style="color:var(--ac2)" id="arbAttempts">0/0</div>
+    <div class="kpi-sub" id="arbSuccLabel">--</div>
+  </div>
 </div>
 
-<!-- ═══ TAB 2: 套利 ═══ -->
-<div id="pageArb" class="page">
-  <div class="kpi-strip">
-    <div class="kpi"><div class="kpi-label">套利净利润</div><div class="kpi-val pos" id="arbNetP">$0.00</div><div class="kpi-sub" id="arbNetE">0.000 ETH</div></div>
-    <div class="kpi"><div class="kpi-label">提交 / 确认</div><div class="kpi-val" style="color:var(--ac2)" id="arbAttempts">0 / 0</div><div class="kpi-sub" id="arbSuccLabel">--</div></div>
-    <div class="kpi"><div class="kpi-label">成功率</div><div class="kpi-val" id="arbWr">--<span class="u">%</span></div><div class="kpi-sub">提交→确认</div></div>
-    <div class="kpi"><div class="kpi-label">扫描次数</div><div class="kpi-val" id="arbScans">0</div><div class="kpi-sub" id="arbOpps">0 个机会</div></div>
-    <div class="kpi"><div class="kpi-label">运行时间</div><div class="kpi-val" id="arbUptime">--</div><div class="kpi-sub" id="arbErrs">0 错误</div></div>
-  </div>
-
-  <!-- Spread Heatmap + Latency Pipeline -->
-  <div class="grid g32">
-    <div class="c"><div class="c-head"><span class="c-title">价差热力图</span><span class="c-badge">池对 × 时间</span></div><div id="spreadHeatmap" style="height:260px"></div></div>
-    <div class="c">
-      <div class="c-head"><span class="c-title">套利链路延迟</span></div>
-      <div class="pipe" style="padding:10px 0">
-        <div class="pipe-s"><div class="pipe-n">Feed</div><div class="pipe-v">0<span class="u">ms</span></div><div class="pipe-t" style="color:var(--g)">推送</div></div>
-        <div class="pipe-s"><div class="pipe-n">Multicall</div><div class="pipe-v">&lt;0.3<span class="u">ms</span></div><div class="pipe-t" style="color:var(--tl)">slot0</div></div>
-        <div class="pipe-s"><div class="pipe-n">检测</div><div class="pipe-v">&lt;0.1<span class="u">ms</span></div><div class="pipe-t" style="color:var(--g)">价差</div></div>
-        <div class="pipe-s"><div class="pipe-n">模拟</div><div class="pipe-v">~1<span class="u">ms</span></div><div class="pipe-t" style="color:var(--tl)">revm</div></div>
-        <div class="pipe-s"><div class="pipe-n">发送</div><div class="pipe-v" id="arbPS">--<span class="u">ms</span></div><div class="pipe-t" id="arbPSs">seq</div></div>
-        <div class="pipe-s"><div class="pipe-n">总计</div><div class="pipe-v" id="arbPT">--<span class="u">ms</span></div><div class="pipe-t" id="arbPTs">--</div></div>
-      </div>
-      <div style="padding:4px 18px 14px"><div class="c-title" style="margin-bottom:8px">Gas 策略</div>
-        <div class="inf"><span class="inf-k">利润 &gt;$50</span><span class="inf-v" style="color:var(--g)">1.0 gwei</span></div>
-        <div class="inf"><span class="inf-k">利润 &gt;$10</span><span class="inf-v" style="color:var(--o)">0.1 gwei</span></div>
-        <div class="inf"><span class="inf-k">其他</span><span class="inf-v" style="color:var(--t2)">0.02 gwei</span></div>
-        <div class="inf"><span class="inf-k">最小利润</span><span class="inf-v">$0.50</span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Pool Pairs + Spread Chart -->
-  <div class="grid g2">
-    <div class="c"><div class="tb-h"><div class="tb-t">监控池对</div><div style="font-size:10px;color:var(--t3)" id="arbPairRefresh">--</div></div>
-      <div id="arbPairsContainer" style="max-height:360px;overflow-y:auto"><div class="empty-row">等待数据...</div></div></div>
-    <div class="c"><div class="c-head"><span class="c-title">价差历史</span></div><div id="spreadChart" style="height:320px"></div></div>
-  </div>
-
-  <!-- Event Stream -->
+<!-- 2. Main Charts Row (3:2) -->
+<div class="grid g32" style="margin-bottom:16px">
+  <!-- Spread Chart -->
   <div class="c">
-    <div class="tb-h"><div class="tb-t" id="arbEventTitle">事件流</div>
-      <div style="display:flex;gap:4px">
-        <button class="pill det" style="cursor:pointer" onclick="filterEvents('all',event)">全部</button>
-        <button class="pill det" style="cursor:pointer;opacity:.4" onclick="filterEvents('detected',event)">检测</button>
-        <button class="pill sm" style="cursor:pointer;opacity:.4" onclick="filterEvents('simulated',event)">模拟</button>
-        <button class="pill w" style="cursor:pointer;opacity:.4" onclick="filterEvents('submitted',event)">提交</button>
-        <button class="pill ok" style="cursor:pointer;opacity:.4" onclick="filterEvents('confirmed',event)">确认</button>
-        <button class="pill er" style="cursor:pointer;opacity:.4" onclick="filterEvents('reverted',event)">失败</button>
+    <div class="c-head">
+      <span class="c-title">价差监控</span>
+      <div class="spread-ctrl">
+        <span class="hottest-badge" id="hottestBadge" style="display:none"></span>
+        <button class="toggle-all-btn" id="toggleAllBtn" onclick="toggleSpreadAll()">显示全部</button>
+        <div class="time-btns">
+          <button class="time-btn spread-time-btn on" onclick="setSpreadRange('15m',this)">15M</button>
+          <button class="time-btn spread-time-btn" onclick="setSpreadRange('1h',this)">1H</button>
+          <button class="time-btn spread-time-btn" onclick="setSpreadRange('all',this)">全部</button>
+        </div>
       </div>
     </div>
-    <div style="max-height:320px;overflow-y:auto">
-      <table class="tb"><thead><tr><th>时间</th><th>事件</th><th>池对</th><th>价差</th><th>利润</th><th>Gas</th><th>延迟</th><th>TX</th></tr></thead>
-      <tbody id="tbArbEvents"></tbody></table>
+    <div id="spreadChart" style="height:380px"></div>
+  </div>
+  <!-- P&L Chart -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">利润趋势</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="time-btns">
+          <button class="time-btn pnl-time-btn on" onclick="setPnlRange('1h',this)">1H</button>
+          <button class="time-btn pnl-time-btn" onclick="setPnlRange('24h',this)">24H</button>
+          <button class="time-btn pnl-time-btn" onclick="setPnlRange('all',this)">全部</button>
+        </div>
+        <span class="c-badge" id="pnlUpdated">--</span>
+      </div>
+    </div>
+    <div id="pnlChart" style="height:380px"></div>
+  </div>
+</div>
+
+<!-- 3. Status + Opportunity + Funnel Row (3 columns) -->
+<div class="grid g3" style="margin-bottom:16px">
+  <!-- System Status -->
+  <div class="c">
+    <div class="c-head"><span class="c-title">系统状态</span></div>
+    <div class="inf"><div class="inf-d w" id="nD"></div><span class="inf-k">本地节点</span><span class="inf-v" id="nV">同步中</span></div>
+    <div class="inf"><div class="inf-d ok" id="fD"></div><span class="inf-k">Seq Feed</span><span class="inf-v" id="fV">--</span></div>
+    <div class="inf"><div class="inf-d er" id="bD"></div><span class="inf-k">Bot</span><span class="inf-v" id="bV">未启动</span></div>
+    <div class="inf"><div class="inf-d ok"></div><span class="inf-k">RPC</span><span class="inf-v mono" id="rpcV">--</span></div>
+    <div style="padding:12px 18px;border-top:1px solid var(--bd)">
+      <div class="c-title" style="margin-bottom:8px">延迟链路</div>
+      <div class="pipe">
+        <div class="pipe-s"><div class="pipe-n">Read</div><div class="pipe-v" id="pR">&lt;1<span class="u">ms</span></div><div class="pipe-t" id="pRs">RPC</div></div>
+        <div class="pipe-s"><div class="pipe-n">Send</div><div class="pipe-v" id="arbPS">--<span class="u">ms</span></div><div class="pipe-t" id="arbPSs">seq</div></div>
+        <div class="pipe-s"><div class="pipe-n">Total</div><div class="pipe-v" id="arbPT">--<span class="u">ms</span></div><div class="pipe-t" id="arbPTs">--</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Best Opportunity -->
+  <div class="c best-opp" id="bestOpp">
+    <div class="opp-inner">
+      <div class="opp-static-dot" id="oppDot"></div>
+      <div>
+        <div class="opp-label">当前最佳机会</div>
+        <div id="oppContent" class="opp-none">暂无套利机会</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Funnel -->
+  <div class="c">
+    <div class="c-head"><span class="c-title">套利漏斗</span><span class="c-badge" id="funnelUpdated">--</span></div>
+    <div class="funnel">
+      <div class="funnel-s"><div class="funnel-icon">&#128269;</div><div class="funnel-n">检测</div><div class="funnel-v" style="color:var(--ac2)" id="fn0">0</div><div class="funnel-p">次扫描</div></div>
+      <div class="funnel-s"><div class="funnel-icon">&#9889;</div><div class="funnel-n">机会</div><div class="funnel-v" style="color:var(--p)" id="fn1">0</div><div class="funnel-p">个有效</div></div>
+      <div class="funnel-s"><div class="funnel-icon">&#128640;</div><div class="funnel-n">提交</div><div class="funnel-v" style="color:var(--o)" id="fn2">0</div><div class="funnel-p">笔交易</div></div>
+      <div class="funnel-s"><div class="funnel-icon">&#9989;</div><div class="funnel-n">确认</div><div class="funnel-v" style="color:var(--g)" id="fn3">0</div><div class="funnel-p">笔成功</div></div>
+      <div class="funnel-s"><div class="funnel-icon">&#10060;</div><div class="funnel-n">失败</div><div class="funnel-v" style="color:var(--r)" id="fn4">0</div><div class="funnel-p">次revert</div></div>
     </div>
   </div>
 </div>
 
+<!-- 4. Pool Pairs + Heatmap Row (1:1) -->
+<div class="grid g2" style="margin-bottom:16px">
+  <!-- Pool Pairs -->
+  <div class="c">
+    <div class="tb-h">
+      <div class="tb-t">监控池对 <span style="font-size:11px;font-weight:400;color:var(--t3)" id="arbPairsCount"></span></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:10px;color:var(--t3)" id="arbPairRefresh">--</span>
+      </div>
+    </div>
+    <div id="arbPairsContainer" style="max-height:450px;overflow-y:auto"><div class="empty-row">等待数据...</div></div>
+  </div>
+
+  <!-- Heatmap -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">价差热力图</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="heatmapPairCount" class="c-badge">-- 池对</span>
+      </div>
+    </div>
+    <div id="spreadHeatmap"></div>
+  </div>
 </div>
+
+<!-- 5. Liquidation Monitor (full width) -->
+<div class="grid g2" style="margin-bottom:16px">
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">近清算仓位</span>
+      <span class="c-badge" id="nearCount">0 个危险仓位</span>
+    </div>
+    <div id="nearTitle" style="display:none">近清算仓位</div>
+    <div style="max-height:320px;overflow-y:auto">
+      <table class="tb"><thead><tr>
+        <th>协议</th><th>用户</th><th>健康因子</th><th>抵押</th><th>债务</th>
+      </tr></thead>
+      <tbody id="tbNear"><tr><td colspan="5" class="empty-row">暂无危险仓位</td></tr></tbody></table>
+    </div>
+  </div>
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">健康因子分布</span>
+    </div>
+    <div id="hfChart" style="height:260px"></div>
+  </div>
+</div>
+
+<!-- 6. Event Stream (full width) -->
+<div class="c">
+  <div class="tb-h">
+    <div class="tb-t" id="arbEventTitle">事件流</div>
+    <div class="ev-filters">
+      <button class="pill det" onclick="filterEvents('all',event)">全部</button>
+      <button class="pill det" style="opacity:.4" onclick="filterEvents('detected',event)">检测</button>
+      <button class="pill sm" style="opacity:.4" onclick="filterEvents('simulated',event)">模拟</button>
+      <button class="pill w" style="opacity:.4" onclick="filterEvents('submitted',event)">提交</button>
+      <button class="pill ok" style="opacity:.4" onclick="filterEvents('confirmed',event)">确认</button>
+      <button class="pill er" style="opacity:.4" onclick="filterEvents('reverted',event)">失败</button>
+    </div>
+  </div>
+  <div style="max-height:320px;overflow-y:auto" id="arbEventScroll">
+    <table class="tb">
+      <thead><tr><th>时间</th><th>事件</th><th>池对</th><th>价差</th><th>利润</th><th>Gas费</th><th>延迟</th><th>TX</th></tr></thead>
+      <tbody id="tbArbEvents"></tbody>
+    </table>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<!-- Hidden elements (nearTitle kept inline above) -->
+
+<!-- Hover Popup -->
+<div id="hoverPopup" style="display:none;position:fixed;z-index:200;background:rgba(17,25,40,0.95);backdrop-filter:blur(16px);border:1px solid var(--bd2);border-radius:10px;padding:14px 18px;pointer-events:none;box-shadow:var(--sh2);font-size:12px;max-width:320px;line-height:1.6"></div>
+
 <script>
-const S={trades:[],lat:[],pnl:[],chain:null,arb:{events:[],pairs:[],spread_history:[]}};
+// State
+const S={trades:[],lat:[],pnl:[],arbPnl:[],chain:null,arb:{events:[],pairs:[],spread_history:[]}};
 let arbFilter='all';
+let pnlRange='1h';
+let spreadRange='15m';
+let showAllSpread=false;
+let activePair=null;
+let heatmapPairFilter=null;
+let prevMetrics={totalP:null,liqP:null,arbP:null};
+const SPARK_PTS=40;
+
+// Utility
 const $=id=>document.getElementById(id);
 const h=(id,v)=>{const el=$(id);if(el)el.innerHTML=v};
 function lc(ms,g,w){return ms<=g?'var(--g)':ms<=w?'var(--o)':'var(--r)'}
-function switchTab(tab){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
-  document.querySelectorAll('.nav-tabs button').forEach(b=>b.classList.remove('on'));
-  if(tab==='arb'){$('pageArb').classList.add('on');document.querySelectorAll('.nav-tabs button')[1].classList.add('on')}
-  else{$('pageLiq').classList.add('on');document.querySelectorAll('.nav-tabs button')[0].classList.add('on')}
-}
-function filterEvents(kind,evt){arbFilter=kind;document.querySelectorAll('#pageArb .tb-h button.pill').forEach(b=>b.style.opacity='.4');if(evt?.target)evt.target.style.opacity='1';renderArbEvents()}
-setInterval(()=>$('clk').textContent=new Date().toTimeString().slice(0,8),1000);
 function fmtPrice(v){if(!Number.isFinite(v)||v<=0)return'--';const d=v>=1000?2:v>=1?4:6;return v.toLocaleString(undefined,{maximumFractionDigits:d})}
+function flashEl(el){if(!el)return;el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash')}
 
-// ─── ApexCharts Initialization ───
-const apexDark={chart:{background:'transparent',foreColor:'#8a94a6',fontFamily:'Inter,sans-serif'},grid:{borderColor:'rgba(255,255,255,.05)',strokeDashArray:3},tooltip:{theme:'dark'},xaxis:{axisBorder:{show:false},axisTicks:{show:false},labels:{style:{colors:'#505a6e',fontSize:'10px'}}},yaxis:{labels:{style:{colors:'#505a6e',fontSize:'10px'}}}};
+function sortTable(tableId,col){
+  const tb=document.querySelector('#'+tableId+' tbody');if(!tb)return;
+  const rows=[...tb.rows];const dir=tb.dataset.sortDir==='asc'?'desc':'asc';tb.dataset.sortDir=dir;
+  rows.sort((a,b)=>{let va=a.cells[col]?.textContent||'',vb=b.cells[col]?.textContent||'';const na=parseFloat(va.replace(/[$,]/g,'')),nb=parseFloat(vb.replace(/[$,]/g,''));if(!isNaN(na)&&!isNaN(nb))return dir==='asc'?na-nb:nb-na;return dir==='asc'?va.localeCompare(vb):vb.localeCompare(va)});
+  rows.forEach(r=>tb.appendChild(r));
+}
+
+function filterEvents(kind,evt){
+  arbFilter=kind;
+  document.querySelectorAll('.ev-filters button').forEach(b=>b.style.opacity='.4');
+  if(evt?.target)evt.target.style.opacity='1';
+  renderArbEvents();
+}
+
+// Clock
+setInterval(()=>{const el=$('clk');if(el)el.textContent=new Date().toTimeString().slice(0,8)},1000);
+
+// P&L Range
+function setPnlRange(r,btn){
+  pnlRange=r;
+  document.querySelectorAll('.pnl-time-btn').forEach(b=>b.classList.remove('on'));
+  if(btn)btn.classList.add('on');
+  updatePnlChart();
+}
+function updatePnlChart(){
+  const now=Date.now();
+  const cutoff=pnlRange==='1h'?now-3600000:pnlRange==='24h'?now-86400000:0;
+  const data=S.pnl.filter(p=>p.x>=cutoff);
+  pnlChart.updateSeries([{data}]);
+}
+
+// Spread Range
+function setSpreadRange(r,btn){
+  spreadRange=r;
+  document.querySelectorAll('.spread-time-btn').forEach(b=>b.classList.remove('on'));
+  if(btn)btn.classList.add('on');
+  renderSpreadChart();
+}
+function toggleSpreadAll(){
+  showAllSpread=!showAllSpread;
+  $('toggleAllBtn').textContent=showAllSpread?'仅显示Top8':'显示全部';
+  renderSpreadChart();
+}
+
+// Inline SVG Sparkline
+function makeSvgSparkline(vals,color,w,ht){
+  if(!vals||vals.length<2)return'';
+  const mn=Math.min(...vals),mx=Math.max(...vals);
+  const rng=mx-mn||1;
+  const xs=vals.map((_,i)=>(i/(vals.length-1))*w);
+  const ys=vals.map(v=>ht-(((v-mn)/rng)*(ht*0.8)+ht*0.1));
+  const pts=xs.map((x,i)=>`${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+  return`<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
+function updateKpiSpark(svgId,vals,color){
+  const el=$(svgId);if(!el)return;
+  el.innerHTML=makeSvgSparkline(vals,color,90,36);
+}
+
+// ApexCharts Init
+const apexDark={
+  chart:{background:'transparent',foreColor:'#8a94a6',fontFamily:'Inter,sans-serif'},
+  grid:{borderColor:'rgba(255,255,255,.05)',strokeDashArray:3},
+  tooltip:{theme:'dark'},
+  xaxis:{axisBorder:{show:false},axisTicks:{show:false},labels:{style:{colors:'#505a6e',fontSize:'10px'}}},
+  yaxis:{labels:{style:{colors:'#505a6e',fontSize:'10px'}}}
+};
 
 // P&L Chart
-let pnlChart=new ApexCharts($('pnlChart'),{...apexDark,chart:{...apexDark.chart,type:'area',height:220,sparkline:{enabled:false},animations:{enabled:true,speed:400},toolbar:{show:false}},series:[{name:'累计利润',data:[]}],stroke:{curve:'smooth',width:2.5},fill:{type:'gradient',gradient:{shadeIntensity:1,opacityFrom:.35,opacityTo:.05,stops:[0,100]}},colors:['#00cec9'],xaxis:{...apexDark.xaxis,type:'datetime'},yaxis:{...apexDark.yaxis,labels:{formatter:v=>'$'+v.toFixed(2)}},dataLabels:{enabled:false}});
+let pnlChart=new ApexCharts($('pnlChart'),{
+  ...apexDark,
+  chart:{...apexDark.chart,type:'area',height:380,sparkline:{enabled:false},animations:{enabled:true,speed:400},toolbar:{show:false}},
+  series:[{name:'累计利润',data:[]}],
+  stroke:{curve:'smooth',width:2.5},
+  fill:{type:'gradient',gradient:{shadeIntensity:1,opacityFrom:.35,opacityTo:.05,stops:[0,100]}},
+  colors:['#00cec9'],
+  xaxis:{...apexDark.xaxis,type:'datetime'},
+  yaxis:{...apexDark.yaxis,labels:{formatter:v=>'$'+v.toFixed(2)}},
+  dataLabels:{enabled:false}
+});
 pnlChart.render();
 
-// Latency Chart
-let latChart=new ApexCharts($('latencyChart'),{...apexDark,chart:{...apexDark.chart,type:'area',height:180,sparkline:{enabled:false},toolbar:{show:false},animations:{enabled:true,speed:300}},series:[{name:'Sequencer延迟',data:[]}],stroke:{curve:'smooth',width:2},fill:{type:'gradient',gradient:{shadeIntensity:1,opacityFrom:.3,opacityTo:.05}},colors:['#a29bfe'],xaxis:{...apexDark.xaxis,labels:{show:false}},yaxis:{...apexDark.yaxis,labels:{formatter:v=>v.toFixed(0)+'ms'}},dataLabels:{enabled:false},annotations:{yaxis:[{y:5,borderColor:'#00cec9',strokeDashArray:4,label:{text:'目标 5ms',style:{color:'#00cec9',background:'transparent',fontSize:'10px'}}}]}});
-latChart.render();
-
-// Health Factor Distribution
-let hfChart=new ApexCharts($('hfChart'),{...apexDark,chart:{...apexDark.chart,type:'bar',height:180,toolbar:{show:false}},series:[{name:'仓位数',data:[]}],plotOptions:{bar:{borderRadius:4,columnWidth:'60%',distributed:true}},colors:['#ff7675','#ff7675','#fdcb6e','#fdcb6e','#00cec9','#00cec9'],xaxis:{categories:['<0.8','0.8-1.0','1.0-1.1','1.1-1.2','1.2-1.5','>1.5'],labels:{style:{colors:'#505a6e',fontSize:'10px'}}},yaxis:{...apexDark.yaxis},legend:{show:false},dataLabels:{enabled:false}});
-hfChart.render();
-
 // Spread Heatmap
-let heatmapChart=new ApexCharts($('spreadHeatmap'),{...apexDark,chart:{...apexDark.chart,type:'heatmap',height:260,toolbar:{show:false}},series:[],plotOptions:{heatmap:{radius:4,colorScale:{ranges:[{from:0,to:5,color:'#1c2233',name:'<5bps'},{from:5,to:15,color:'#2d3a5e',name:'5-15bps'},{from:15,to:30,color:'#6c5ce7',name:'15-30bps'},{from:30,to:100,color:'#a29bfe',name:'30-100bps'},{from:100,to:1000,color:'#00cec9',name:'>100bps'}]}}},dataLabels:{enabled:false},xaxis:{...apexDark.xaxis,labels:{show:false}}});
+let heatmapChart=new ApexCharts($('spreadHeatmap'),{
+  ...apexDark,
+  chart:{...apexDark.chart,type:'heatmap',height:200,toolbar:{show:false},events:{
+    dataPointSelection:(e,ctx,cfg)=>{
+      const pairName=cfg.w.config.series[cfg.seriesIndex]?.name;
+      if(pairName){heatmapPairFilter=pairName===heatmapPairFilter?null:pairName;renderArbEvents();}
+    }
+  }},
+  series:[],
+  plotOptions:{heatmap:{radius:2,colorScale:{ranges:[
+    {from:0,to:5,color:'#0f1520',name:'<5bps'},
+    {from:5,to:15,color:'#2d3a5e',name:'5-15bps'},
+    {from:15,to:30,color:'#6c5ce7',name:'15-30bps'},
+    {from:30,to:100,color:'#a29bfe',name:'30-100bps'},
+    {from:100,to:10000,color:'#00cec9',name:'>100bps'}
+  ]}}},
+  dataLabels:{enabled:false},
+  xaxis:{...apexDark.xaxis,labels:{show:false}},
+  yaxis:{labels:{show:false}},
+  tooltip:{custom:({series,seriesIndex,dataPointIndex,w})=>{
+    const s=w.config.series[seriesIndex];
+    const val=s?.data?.[dataPointIndex]?.y??0;
+    return`<div style="padding:8px 12px;font-size:12px"><b style="color:var(--t)">${s.name}</b><br><span style="color:var(--ac2)">${val.toFixed(1)} bps</span></div>`;
+  }}
+});
 heatmapChart.render();
 
-// Spread History
-let spreadLineChart=new ApexCharts($('spreadChart'),{...apexDark,chart:{...apexDark.chart,type:'line',height:320,toolbar:{show:false},animations:{enabled:true,speed:300}},series:[],stroke:{curve:'stepline',width:1.5},xaxis:{...apexDark.xaxis,type:'datetime'},yaxis:{...apexDark.yaxis,labels:{formatter:v=>v.toFixed(1)+'bps'}},dataLabels:{enabled:false},legend:{position:'top',horizontalAlign:'left',labels:{colors:'#8a94a6'},fontSize:'11px'}});
+// Spread History (line chart)
+let spreadLineChart=new ApexCharts($('spreadChart'),{
+  ...apexDark,
+  chart:{...apexDark.chart,type:'line',height:380,toolbar:{show:false},animations:{enabled:true,speed:300},events:{
+    legendClick:(ctx,seriesIndex)=>{
+      const name=ctx.w.config.series[seriesIndex]?.name;
+      if(name){activePair=name===activePair?null:name;renderArbPairs();}
+    }
+  }},
+  series:[],
+  stroke:{curve:'stepline',width:1.5},
+  xaxis:{...apexDark.xaxis,type:'datetime'},
+  yaxis:{...apexDark.yaxis,labels:{formatter:v=>v.toFixed(1)+'bps'}},
+  dataLabels:{enabled:false},
+  legend:{position:'top',horizontalAlign:'left',labels:{colors:'#8a94a6'},fontSize:'11px',itemMargin:{horizontal:6,vertical:2}}
+});
 spreadLineChart.render();
 
-// ─── Render Functions ───
+// Health Factor Distribution
+let hfChart=new ApexCharts($('hfChart'),{
+  ...apexDark,
+  chart:{...apexDark.chart,type:'bar',height:260,toolbar:{show:false}},
+  series:[{name:'仓位数',data:[]}],
+  plotOptions:{bar:{borderRadius:4,columnWidth:'60%',distributed:true}},
+  colors:['#ff7675','#ff7675','#fdcb6e','#fdcb6e','#00cec9','#00cec9'],
+  xaxis:{categories:['<0.8','0.8-1.0','1.0-1.1','1.1-1.2','1.2-1.5','>1.5'],labels:{style:{colors:'#505a6e',fontSize:'10px'}}},
+  yaxis:{...apexDark.yaxis},
+  legend:{show:false},
+  dataLabels:{enabled:false}
+});
+hfChart.render();
+
+// Render Functions
 function renderTrades(){
-  const bd=$('tbTrades'),tt=$('tradeTitle');
-  tt.textContent=S.trades.length?`${S.trades.length} 笔交易`:'交易记录';
+  const bd=$('tbTrades');if(!bd)return;
   if(!S.trades.length){bd.innerHTML='<tr><td colspan="6" class="empty-row">等待交易数据</td></tr>';return}
   bd.innerHTML=S.trades.map(t=>{
     const c=parseFloat(t.profit)>=0?'pos':'neg';
-    const st=t.status==='ok'?'ok':t.status==='err'?'er':'sm';
-    const stText={ok:'成功',err:'失败',sim:'模拟'}[t.status]||'?';
-    return `<tr><td class="mono" style="color:var(--t2)">${t.time}</td><td>${t.pair}</td><td class="${c}">$${t.profit}</td><td style="color:var(--t2)">${t.gas}</td><td><span class="pill ${st}">${stText}</span></td><td>${t.tx==='—'?'—':`<a class="lk" href="https://arbiscan.io/tx/${t.tx}" target="_blank">${t.tx.slice(0,10)}…</a>`}</td></tr>`
-  }).join('')
+    const st=t.status==='ok'?'ok':t.status==='err'?'er':t.status==='pending'?'w':'sm';
+    const stText={ok:'成功',err:'失败',pending:'待确认',sim:'模拟'}[t.status]||'?';
+    return`<tr><td class="mono" style="color:var(--t2)">${t.time}</td><td>${t.pair}</td><td class="${c}">$${t.profit}</td><td style="color:var(--t2)">${t.gas}</td><td><span class="pill ${st}">${stText}</span></td><td>${t.tx==='\u2014'?'\u2014':`<a class="lk" href="https://arbiscan.io/tx/${t.tx}" target="_blank">${t.tx.slice(0,10)}\u2026</a>`}</td></tr>`
+  }).join('');
 }
 
 function renderNear(){
   const ps=S.chain?.near_liquidation||[];
-  $('nearCount').textContent=`${ps.length} 个危险仓位`;
-  // Build HF distribution
-  const buckets=[0,0,0,0,0,0]; // <0.8, 0.8-1.0, 1.0-1.1, 1.1-1.2, 1.2-1.5, >1.5
+  const ncEl=$('nearCount');if(ncEl)ncEl.textContent=`${ps.length} 个危险仓位`;
+  const tt=$('nearTitle');
+  if(tt)tt.textContent=ps.length?`${ps.length} 个危险仓位`:'近清算仓位';
+  // Update HF distribution chart
+  const buckets=[0,0,0,0,0,0];
   ps.forEach(p=>{const hf=parseFloat(p.health_factor);if(hf<0.8)buckets[0]++;else if(hf<1.0)buckets[1]++;else if(hf<1.1)buckets[2]++;else if(hf<1.2)buckets[3]++;else if(hf<1.5)buckets[4]++;else buckets[5]++});
-  hfChart.updateSeries([{data:buckets}]);
+  if(typeof hfChart!=='undefined')hfChart.updateSeries([{data:buckets}]);
+  const bd=$('tbNear');
+  if(!bd)return;
+  if(!ps.length){bd.innerHTML='<tr><td colspan="5" class="empty-row">暂无危险仓位</td></tr>';return}
+  bd.innerHTML=ps.slice(0,50).map(p=>{
+    const hf=parseFloat(p.health_factor);
+    const hfColor=hf<1.0?'var(--r)':hf<1.1?'var(--o)':'var(--t)';
+    return`<tr><td><span class="pill sm">${p.protocol||'AAVE'}</span></td><td><a class="lk" href="https://arbiscan.io/address/${p.user_full||''}" target="_blank">${p.user||'--'}</a></td><td style="color:${hfColor};font-weight:700">${p.health_factor}</td><td>${p.collateral_usd||'--'}</td><td>${p.debt_usd||'--'}</td></tr>`;
+  }).join('');
 }
 
-function renderBots(){
-  const cs=S.chain?.competitors||[],bd=$('tbBots'),tt=$('botTitle');
-  tt.textContent=cs.length?`${cs.length} 个竞争 Bot`:'竞争对手';
-  if(!cs.length){bd.innerHTML='<tr><td colspan="5" class="empty-row">暂无数据</td></tr>';return}
-  bd.innerHTML=cs.map((c,i)=>`<tr><td style="text-align:center;color:var(--t3)">${i+1}</td><td><a class="lk" href="https://arbiscan.io/address/${c.address}" target="_blank">${c.short}</a></td><td style="font-weight:600">${c.count}</td><td>${c.protocols.map(p=>`<span class="pill sm">${p}</span>`).join(' ')}</td><td class="mono" style="color:var(--t2)">${c.last_block?'#'+c.last_block.toLocaleString():'—'}</td></tr>`).join('')
+// Best Opportunity Widget
+function renderBestOpp(pairs){
+  const profitable=pairs.filter(p=>p.profitable).sort((a,b)=>b.spread_bps-a.spread_bps);
+  const opp=$('bestOpp'),dot=$('oppDot'),cont=$('oppContent');
+  if(!profitable.length){
+    opp.classList.remove('pulsing');
+    dot.className='opp-static-dot';
+    cont.innerHTML='<span class="opp-none">暂无套利机会</span>';
+    return;
+  }
+  const best=profitable[0];
+  opp.classList.add('pulsing');
+  dot.className='pulse-dot';
+  cont.innerHTML=`
+    <div style="display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap">
+      <div>
+        <div class="opp-label">当前最佳机会</div>
+        <div class="opp-spread" style="color:var(--g)">${best.spread_bps.toFixed(1)}<span class="opp-unit">bps</span></div>
+      </div>
+      <div class="opp-divider"></div>
+      <div>
+        <div class="opp-pair">${best.name}</div>
+        <div class="opp-profit">阈值: ${best.fee_threshold_bps.toFixed(1)} bps &nbsp;|&nbsp; 超出: +${(best.spread_bps-best.fee_threshold_bps).toFixed(1)} bps</div>
+        ${best.kind==='route'?`<div style="font-size:11px;color:var(--t3);margin-top:2px">路径: ${best.path||'--'} (${best.hop_count||'?'} hops)</div>`:''}
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em">竞争对手</div>
+        <div style="font-size:14px;font-weight:700;color:var(--o)">${profitable.length} 对可套利</div>
+      </div>
+    </div>`;
 }
 
-function renderMkt(){
-  const ls=S.chain?.market_liquidations||[],bd=$('tbMkt'),tt=$('mktTitle');
-  tt.textContent=ls.length?`${ls.length} 笔市场清算`:'市场清算';
-  if(!ls.length){bd.innerHTML='<tr><td colspan="7" class="empty-row">近期无清算</td></tr>';return}
-  bd.innerHTML=ls.map(l=>`<tr><td class="mono" style="color:var(--t2)">${l.time_ago}</td><td class="mono">${l.user}</td><td class="mono">${l.liquidator}</td><td>${l.collateral}/${l.debt}</td><td>${l.debt_amount} ${l.debt}</td><td>${l.collateral_amount} ${l.collateral}</td><td><a class="lk" href="https://arbiscan.io/tx/${l.tx_hash}" target="_blank">${(l.tx_hash||'').slice(0,10)}…</a></td></tr>`).join('')
+// Pool Pair Cards
+function shortPairName(n){
+  return n
+    .replace(/^WETH\//,'').replace(/^WETH\u2192/,'')
+    .replace(/\u2192WETH$/,'').replace(/\/WETH$/,'')
+    .replace(' Uni<>Sushi','\xb7U\u2194S').replace(' Uni<>PCS','\xb7U\u2194P')
+    .replace(/\s+0\.\d+%\s+<>\s+0\.\d+%/,s=>{const m=s.match(/(\d+)%\s+<>\s+(\d+)%/);return m?`\xb7${m[1]}\u2194${m[2]}`:'\u2194'})
+    .replace(/\s+0\.\d+%/,'')
+    .slice(0,16);
 }
 
-renderTrades();renderNear();renderBots();renderMkt();
-
-// ─── Arb Pairs ───
 function renderArbPairs(){
   const pairs=S.arb.pairs||[];
   if(!pairs.length){$('arbPairsContainer').innerHTML='<div class="empty-row">等待扫描...</div>';return}
   $('arbPairRefresh').textContent=new Date().toLocaleTimeString()+' 刷新';
-  $('arbPairsContainer').innerHTML=pairs.map(p=>{
+
+  const sorted=[...pairs].sort((a,b)=>{
+    if(a.profitable!==b.profitable)return b.profitable?1:-1;
+    return b.spread_bps-a.spread_bps;
+  });
+
+  $('arbPairsCount').textContent=`(${sorted.length})`;
+
+  const hist=S.arb.spread_history||[];
+  const histByPair={};
+  hist.forEach(h=>{
+    if(!histByPair[h.pair])histByPair[h.pair]=[];
+    histByPair[h.pair].push(h.spread_bps);
+  });
+
+  $('arbPairsContainer').innerHTML=sorted.map(p=>{
     const ratio=Math.min(p.spread_bps/Math.max(p.fee_threshold_bps*2,1),1);
+    const threshRatio=Math.min(0.5,1);
     const barColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--t3)';
-    const spreadColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--t2)';
+    const spreadColor=p.profitable?'var(--g)':p.spread_bps>p.fee_threshold_bps*0.7?'var(--o)':'var(--r)';
+    const isActive=activePair===p.name;
+
+    const sparkVals=(histByPair[p.name]||[]).slice(-10);
+    const sparkSvg=sparkVals.length>=2
+      ?`<svg class="pool-sparkline" viewBox="0 0 100 28" preserveAspectRatio="none">${makeSvgSparkline(sparkVals,p.profitable?'#00cec9':'#505a6e',100,28)}</svg>`
+      :'';
+
     const info=p.kind==='route'
-      ?`<span><span class="label">路径</span> ${p.path||'--'}</span><span><span class="label">Hop</span> ${p.hop_count||'--'}</span>`
+      ?`<span><span class="label">路径</span> ${p.path||'--'}</span><span><span class="label">Hops</span> ${p.hop_count||'--'}</span>`
       :`<span><span class="label">Pool A</span> ${fmtPrice(p.price_a)}</span><span><span class="label">Pool B</span> ${fmtPrice(p.price_b)}</span>`;
-    return `<div class="pool-card"><div class="pool-head"><span class="pool-name">${p.name}</span><span class="pool-spread-num" style="color:${spreadColor}">${p.spread_bps.toFixed(1)}<span style="font-size:11px;font-weight:500;color:var(--t3)"> bps</span></span></div><div class="pool-prices">${info}<span><span class="label">阈值</span> ${p.fee_threshold_bps.toFixed(1)} bps</span><span><span class="label">流动性</span> ${p.liquidity_a||'--'} / ${p.liquidity_b||'--'}</span></div><div class="spread-bar"><div class="spread-fill" style="width:${(ratio*100).toFixed(0)}%;background:${barColor}"></div></div></div>`;
+
+    return`<div class="pool-card${isActive?' active':''}" onclick="selectPair('${p.name.replace(/'/g,"\\'")}')">
+      <div class="pool-head">
+        <span class="pool-name">${p.name}</span>
+        <div class="pool-right">
+          <span class="pool-spread-num" style="color:${spreadColor}">${p.spread_bps.toFixed(1)}<span style="font-size:11px;font-weight:500;color:var(--t3)"> bps</span></span>
+          <span class="pool-badge ${p.profitable?'prof':'wait'}">${p.profitable?'可套利 \u2713':'待机...'}</span>
+        </div>
+      </div>
+      <div class="pool-prices">${info}<span><span class="label">阈值</span> ${p.fee_threshold_bps.toFixed(1)} bps</span><span><span class="label">流动性</span> ${p.liquidity_a||'--'} / ${p.liquidity_b||'--'}</span></div>
+      <div class="spread-bar-wrap">
+        <div class="spread-bar-labels">
+          <span>0</span><span>阈值 ${p.fee_threshold_bps.toFixed(0)}</span><span>${(p.fee_threshold_bps*2).toFixed(0)} bps</span>
+        </div>
+        <div class="spread-bar">
+          <div class="spread-fill" style="width:${(ratio*100).toFixed(0)}%;background:${barColor}"></div>
+          <div class="spread-bar-threshold" style="left:${(threshRatio*100).toFixed(0)}%"></div>
+        </div>
+      </div>
+      ${sparkSvg}
+    </div>`;
   }).join('');
 }
 
-// ─── Spread Chart ───
+function selectPair(name){
+  activePair=name===activePair?null:name;
+  renderArbPairs();
+  renderSpreadChart();
+}
+
+// Spread Chart
 function renderSpreadChart(){
   const hist=S.arb.spread_history||[];
   if(!hist.length)return;
+
+  const now=Date.now();
+  const cutoff=spreadRange==='15m'?now-900000:spreadRange==='1h'?now-3600000:0;
+
   const byPair={};
-  hist.forEach(h=>{if(!byPair[h.pair])byPair[h.pair]=[];byPair[h.pair].push({x:h.ts,y:h.spread_bps})});
-  const series=Object.entries(byPair).map(([name,data])=>({name,data}));
+  hist.forEach(h=>{
+    if(h.ts<cutoff)return;
+    if(!byPair[h.pair])byPair[h.pair]=[];
+    byPair[h.pair].push({x:h.ts,y:h.spread_bps});
+  });
+
+  let hottestPair=null,hottestMax=0;
+  Object.entries(byPair).forEach(([name,data])=>{
+    const mx=Math.max(...data.map(d=>d.y));
+    if(mx>hottestMax){hottestMax=mx;hottestPair=name;}
+  });
+
+  const hb=$('hottestBadge');
+  if(hottestPair){
+    hb.style.display='inline-block';
+    hb.textContent=`最高价差: ${shortPairName(hottestPair)} ${hottestMax.toFixed(0)}bps`;
+  } else {hb.style.display='none'}
+
+  let allPairs=Object.entries(byPair).map(([name,data])=>({name,data,max:Math.max(...data.map(d=>d.y))}));
+
+  let selectedPairs;
+  if(activePair&&byPair[activePair]){
+    const others=allPairs.filter(p=>p.name!==activePair).sort((a,b)=>b.max-a.max).slice(0,7);
+    const active=allPairs.find(p=>p.name===activePair);
+    selectedPairs=[active,...others].filter(Boolean);
+  } else if(showAllSpread){
+    selectedPairs=allPairs.sort((a,b)=>b.max-a.max);
+  } else {
+    selectedPairs=allPairs.sort((a,b)=>b.max-a.max).slice(0,8);
+  }
+
+  const series=selectedPairs.map(({name,data})=>({name,data}));
   spreadLineChart.updateSeries(series);
 }
 
-// ─── Spread Heatmap ───
+// Heatmap
 function renderHeatmap(){
   const hist=S.arb.spread_history||[];
   if(!hist.length)return;
+
   const byPair={};
-  hist.forEach(h=>{if(!byPair[h.pair])byPair[h.pair]=[];byPair[h.pair].push(Math.abs(h.spread_bps))});
+  hist.forEach(h=>{
+    if(!byPair[h.pair])byPair[h.pair]=[];
+    byPair[h.pair].push(Math.abs(h.spread_bps));
+  });
+
   const series=Object.entries(byPair).map(([name,data])=>{
     const buckets=[];
     const step=Math.max(1,Math.floor(data.length/20));
@@ -372,87 +779,185 @@ function renderHeatmap(){
       const slice=data.slice(i,i+step);
       buckets.push({x:''+(i/step+1),y:Math.max(...slice)});
     }
-    return{name,data:buckets};
+    return{name:name,data:buckets};
   });
+
+  const dynH=Math.max(120,Math.min(series.length*18+60,600));
+  $('spreadHeatmap').style.height=dynH+'px';
+  $('heatmapPairCount').textContent=`${series.length} 池对`;
+
+  heatmapChart.updateOptions({chart:{height:dynH}},false,false);
   heatmapChart.updateSeries(series);
 }
 
-// ─── Arb Events ───
+// Arb Events
 function renderArbEvents(){
   const events=S.arb.events||[];
-  const filtered=arbFilter==='all'?events:events.filter(e=>e.kind===arbFilter);
+  let filtered=arbFilter==='all'?events:events.filter(e=>e.kind===arbFilter);
+  if(heatmapPairFilter){
+    filtered=filtered.filter(e=>e.pair===heatmapPairFilter);
+  }
   const bd=$('tbArbEvents');
-  $('arbEventTitle').textContent=`事件流 (${filtered.length})`;
+  $('arbEventTitle').textContent=`事件流 (${filtered.length})${heatmapPairFilter?' \u2014 '+shortPairName(heatmapPairFilter):''}`;
   if(!filtered.length){bd.innerHTML='<tr><td colspan="8" class="empty-row">等待事件</td></tr>';return}
   const kindMap={detected:['检测','det'],simulated:['模拟','sim'],submitted:['提交','sub'],confirmed:['确认','ok'],reverted:['失败','rev'],skipped:['跳过','skip']};
-  bd.innerHTML=filtered.slice(0,100).map(e=>{
+  bd.innerHTML=filtered.slice(0,200).map(e=>{
     const [label,cls]=kindMap[e.kind]||['?','skip'];
     const dt=new Date(e.ts);const t=dt.toLocaleTimeString();
-    return `<tr><td class="mono" style="color:var(--t2)">${t}</td><td><span class="ev-dot ${cls}"></span>${label}</td><td>${e.pair||'--'}</td><td>${e.spread_bps?e.spread_bps.toFixed(1)+'bps':'--'}</td><td class="${e.profit_usd>0?'pos':''}">${e.profit_usd?'$'+e.profit_usd.toFixed(2):'--'}</td><td style="color:var(--t2)">${e.gas_used||'--'}</td><td>${e.latency_ms?e.latency_ms+'ms':'--'}</td><td>${e.tx_hash?`<a class="lk" href="https://arbiscan.io/tx/${e.tx_hash}" target="_blank">${e.tx_hash.slice(0,10)}…</a>`:'--'}</td></tr>`;
+    return`<tr style="cursor:default" onmouseenter="showEventPopup(event,${JSON.stringify(JSON.stringify(e))})" onmouseleave="hideEventPopup()">
+      <td class="mono" style="color:var(--t2)">${t}</td>
+      <td><span class="ev-dot ${cls}"></span>${label}</td>
+      <td>${e.pair||'--'}</td>
+      <td>${e.spread_bps?e.spread_bps.toFixed(1)+'bps':'--'}</td>
+      <td class="${e.profit_usd>0?'pos':''}">${e.profit_usd?'$'+e.profit_usd.toFixed(2):'--'}</td>
+      <td style="color:var(--t2)">${e.gas_cost_usd?'$'+e.gas_cost_usd.toFixed(4):e.gas_used||'--'}</td>
+      <td>${e.latency_ms?e.latency_ms+'ms':'--'}</td>
+      <td>${e.tx_hash?`<a class="lk" href="https://arbiscan.io/tx/${e.tx_hash}" target="_blank">${e.tx_hash.slice(0,10)}\u2026</a>`:'--'}</td>
+    </tr>`;
   }).join('');
+
+  const sc=$('arbEventScroll');
+  if(sc)sc.scrollTop=sc.scrollHeight;
 }
 
-// ─── Data Fetchers ───
-async function probe(){try{const r=await fetch('/api/latency');if(!r.ok)return;const d=await r.json(),p=d.probes||{};
-  const rd=p.read||{},ar=p.read_arb1||{},sq=p.sequencer||{},lo=p.local_node||{};
-  const bk=lo.block||rd.block||ar.block;if(bk)$('blk').textContent=`#${bk.toLocaleString()}`;
-  const src=lo.ms>0?lo:rd.ms>0?rd:ar,lbl=lo.ms>0?'IPC':rd.ms>0?'RPC':'arb1';
-  if(src&&src.ms>=0){h('pR',`${src.ms}<span class="u">ms</span>`);$('pRs').textContent=lbl;$('pRs').style.color=lc(src.ms,2,30)}
-  if(sq.ms>=0){h('pS',`${sq.ms}<span class="u">ms</span>`);$('pSs').style.color=lc(sq.ms,5,20);h('arbPS',`${sq.ms}<span class="u">ms</span>`);$('arbPSs').style.color=lc(sq.ms,5,20)}
-  if(src&&src.ms>=0&&sq.ms>=0){const t=src.ms+2+.5+sq.ms;h('pT',`${t.toFixed(0)}<span class="u">ms</span>`);$('pTs').style.color=lc(t,8,20);$('pTs').textContent=t<=5?'极速':t<=10?'优秀':'偏高';const ta=src.ms+1+.4+sq.ms;h('arbPT',`${ta.toFixed(0)}<span class="u">ms</span>`);$('arbPTs').style.color=lc(ta,5,10);$('arbPTs').textContent=ta<=3.5?'极速':ta<=5?'优秀':'偏高'}
-  if(lo.ms>0){$('nD').className='inf-d ok';$('nV').textContent='已同步'}
-  const arbReadMs=ar.ms>=0?ar.ms:rd.ms;if(arbReadMs>=0)$('rpcV').textContent=`arb1 ${arbReadMs}ms`;
-  if(sq.ms>=0)$('fV').textContent=`seq ${sq.ms}ms`;
-  if(d.history?.sequencer?.length>=2){
-    S.lat=d.history.sequencer.slice(-60);
-    latChart.updateSeries([{data:S.lat.map((v,i)=>({x:Date.now()-((S.lat.length-i)*2000),y:v}))}]);
-  }
-}catch{}}
+// Hover Popup
+function showEventPopup(evt,jsonStr){
+  let e;try{e=JSON.parse(jsonStr)}catch{return}
+  const pop=$('hoverPopup');
+  const rows=[
+    ['时间',new Date(e.ts).toLocaleString()],
+    ['类型',e.kind||'--'],
+    ['池对',e.pair||'--'],
+    ['价差',e.spread_bps?e.spread_bps.toFixed(2)+' bps':'--'],
+    ['利润',e.profit_usd?'$'+e.profit_usd.toFixed(4):'--'],
+    ['Gas费',e.gas_cost_usd?'$'+e.gas_cost_usd.toFixed(4):'--'],
+    ['Gas Used',e.gas_used||'--'],
+    ['延迟',e.latency_ms?e.latency_ms+'ms':'--'],
+    ['TX',e.tx_hash?e.tx_hash.slice(0,20)+'\u2026':'--'],
+  ].filter(([,v])=>v&&v!=='--');
+  pop.innerHTML='<div style="margin-bottom:6px;font-weight:700;color:var(--t)">事件详情</div>'+rows.map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:16px"><span style="color:var(--t3)">${k}</span><span style="color:var(--t);font-weight:500">${v}</span></div>`).join('');
+  const x=Math.min(evt.clientX+12,window.innerWidth-340);
+  const y=Math.min(evt.clientY+8,window.innerHeight-200);
+  pop.style.left=x+'px';pop.style.top=y+'px';pop.style.display='block';
+}
+function hideEventPopup(){$('hoverPopup').style.display='none'}
+
+// Data Fetchers
+async function probe(){
+  try{
+    const r=await fetch('/api/latency');if(!r.ok)return;const d=await r.json(),p=d.probes||{};
+    const rd=p.read||{},ar=p.read_arb1||{},sq=p.sequencer||{},lo=p.local_node||{};
+    const bk=lo.block||rd.block||ar.block;if(bk)$('blk').textContent=`#${bk.toLocaleString()}`;
+    const src=lo.ms>0?lo:rd.ms>0?rd:ar,lbl=lo.ms>0?'IPC':rd.ms>0?'RPC':'arb1';
+    if(src&&src.ms>=0){h('pR',`${src.ms}<span class="u">ms</span>`);$('pRs').textContent=lbl;$('pRs').style.color=lc(src.ms,2,30)}
+    if(sq.ms>=0){h('arbPS',`${sq.ms}<span class="u">ms</span>`);$('arbPSs').style.color=lc(sq.ms,5,20)}
+    if(src&&src.ms>=0&&sq.ms>=0){
+      const ta=src.ms+1+.4+sq.ms;
+      h('arbPT',`${ta.toFixed(0)}<span class="u">ms</span>`);$('arbPTs').style.color=lc(ta,5,10);$('arbPTs').textContent=ta<=3.5?'极速':ta<=5?'优秀':'偏高';
+    }
+    if(lo.ms>0){$('nD').className='inf-d ok';$('nV').textContent='已同步'}
+    const arbReadMs=ar.ms>=0?ar.ms:rd.ms;if(arbReadMs>=0)$('rpcV').textContent=`arb1 ${arbReadMs}ms`;
+    if(sq.ms>=0)$('fV').textContent=`seq ${sq.ms}ms`;
+  }catch{}
+}
 probe();setInterval(probe,2000);
 
-async function pollBot(){try{const r=await fetch('/api/metrics');if(!r.ok)return;const d=await r.json();
-  const ep=window._ethPrice||3500;
-  if(d.total_profit_usd!==undefined){h('liqNetP',`$${d.total_profit_usd.toFixed(2)}`);h('liqNetE',`${(d.total_profit_usd/ep).toFixed(4)} ETH`);
-    S.pnl.push({x:Date.now(),y:d.total_profit_usd});if(S.pnl.length>200)S.pnl.shift();
-    pnlChart.updateSeries([{data:S.pnl}]);$('pnlUpdated').textContent=new Date().toLocaleTimeString();
-  }
-  if(d.total_liquidations!==undefined)h('liqCount',d.total_liquidations);
-  if(d.successful_liquidations!==undefined)$('liqSuccess').textContent=`${d.successful_liquidations} 成功`;
-  if(d.success_rate!==undefined)h('liqWr',`${d.success_rate.toFixed(1)}<span class="u">%</span>`);
-  if(d.avg_latency_ms!==undefined&&d.avg_latency_ms>0)h('liqLat',`${d.avg_latency_ms.toFixed(1)}<span class="u">ms</span>`);
-  if(d.uptime){h('liqUptime',d.uptime);h('arbUptime',d.uptime)}
-  if(d.blocks_processed!==undefined)h('liqBlocks',d.blocks_processed.toLocaleString());
-  if(d.positions_scanned!==undefined)$('liqScanned').textContent=`${d.positions_scanned.toLocaleString()} 次扫描`;
-  if(d.errors!==undefined){$('liqErrs').textContent=`${d.errors} 错误`;$('liqErrs').style.color=d.errors>0?'var(--r)':'var(--t3)';$('arbErrs').textContent=`${d.errors} 错误`;$('arbErrs').style.color=d.errors>0?'var(--r)':'var(--t3)'}
-  if(d.status==='running'){$('sDot').className='dot on';$('sText').textContent='运行中';$('bD').className='inf-d ok';$('bV').textContent='运行中'}
-  const aa=d.arb_attempts||0,as2=d.arb_successes||0,ap=d.arb_profit_usd||0;
-  h('arbNetP',`$${ap.toFixed(2)}`);$('arbNetP').style.color=ap>0?'var(--g)':ap<0?'var(--r)':'var(--t)';
-  h('arbNetE',`${(ap/ep).toFixed(4)} ETH`);h('arbAttempts',`${aa} / ${as2}`);
-  $('arbSuccLabel').textContent=aa>0?`成功率 ${((as2/aa)*100).toFixed(1)}%`:'--';
-  h('arbWr',aa>0?`${((as2/aa)*100).toFixed(1)}<span class="u">%</span>`:'--<span class="u">%</span>');
-}catch{}}
+async function pollBot(){
+  try{
+    const r=await fetch('/api/metrics');if(!r.ok)return;const d=await r.json();
+    const ep=window._ethPrice||3500;
+    const liqP=d.total_profit_usd||0;const arbP=d.arb_profit_usd||0;const totalP=liqP+arbP;
+
+    const trendArrow=(curr,prev)=>{
+      if(prev===null)return'';
+      if(curr>prev)return'<span class="kpi-trend up">\u2191</span>';
+      if(curr<prev)return'<span class="kpi-trend dn">\u2193</span>';
+      return'';
+    };
+    $('k0t').innerHTML=trendArrow(totalP,prevMetrics.totalP);
+    $('k2t').innerHTML=trendArrow(arbP,prevMetrics.arbP);
+    prevMetrics={totalP,liqP,arbP};
+
+    const liqNetEl=$('liqNetP');
+    h('liqNetP',`$${totalP.toFixed(2)}`);
+    $('liqNetP').style.color=totalP>0?'var(--g)':totalP<0?'var(--r)':'var(--t)';
+    flashEl(liqNetEl);
+    h('liqNetE',`${(totalP/ep).toFixed(4)} ETH`);
+
+    h('arbOnlyP',`$${arbP.toFixed(2)}`);$('arbOnlyP').style.color=arbP>0?'var(--g)':'var(--t2)';
+    h('arbOnlyCount',`${d.arb_successes||0} 笔套利`);
+
+    if(d.positions_scanned!==undefined)h('positionsKpi',d.positions_scanned.toLocaleString());
+
+    S.pnl.push({x:Date.now(),y:totalP});if(S.pnl.length>2000)S.pnl.shift();
+    updatePnlChart();$('pnlUpdated').textContent=new Date().toLocaleTimeString();
+    const sparkVals=S.pnl.slice(-SPARK_PTS).map(p=>p.y);
+    updateKpiSpark('spark0',sparkVals,'#00cec9');
+
+    if(d.uptime)$('liqUpNav').textContent=d.uptime;
+    if(d.blocks_processed!==undefined)h('liqBlocks',d.blocks_processed.toLocaleString());
+    if(d.errors!==undefined){$('liqErrs').textContent=`${d.errors} 错误`;$('liqErrs').style.color=d.errors>0?'var(--r)':'var(--t3)'}
+    if(d.status==='running'){$('sDot').className='dot on';$('sText').textContent='运行中';$('bD').className='inf-d ok';$('bV').textContent='运行中';
+      const modeEl=$('mode');modeEl.textContent='LIVE';modeEl.className='tag live';
+    }
+
+    const aa=d.arb_attempts||0,as2=d.arb_successes||0;
+    h('arbAttempts',`${aa} / ${as2}`);
+    $('arbSuccLabel').textContent=aa>0?`成功率 ${((as2/aa)*100).toFixed(1)}%`:'--';
+  }catch{}
+}
 pollBot();setInterval(pollBot,2000);
 
-async function pollArb(){try{const r=await fetch('/api/arb');if(!r.ok)return;const d=await r.json();
-  S.arb=d;h('arbScans',(d.scans||0).toLocaleString());
-  $('arbOpps').textContent=`${(d.opportunities||0).toLocaleString()} 个机会`;
-  const tradeKinds=new Set(['submitted','confirmed','reverted']);
-  S.trades=(d.events||[]).filter(e=>tradeKinds.has(e.kind)).map(e=>{
-    const dt=new Date(e.ts);const tStr=dt.toLocaleTimeString();
-    const status=e.kind==='confirmed'?'ok':e.kind==='reverted'?'err':'sim';
-    return{time:tStr,pair:e.pair||'--',profit:e.profit_usd?e.profit_usd.toFixed(2):'0',gas:e.gas_used?'$'+(e.gas_used*0.1/1e9).toFixed(4):'--',status,tx:e.tx_hash||'—'};
-  });
-  renderTrades();renderArbPairs();renderSpreadChart();renderHeatmap();renderArbEvents();
-}catch{}}
+async function pollArb(){
+  try{
+    const r=await fetch('/api/arb');if(!r.ok)return;const d=await r.json();
+    S.arb=d;
+    h('arbScans',(d.scans||0).toLocaleString());
+    $('arbOpps').textContent=`${(d.opportunities||0).toLocaleString()} 个机会`;
+
+    const evts=d.events||[];
+    h('fn0',(d.scans||0).toLocaleString());
+    h('fn1',(d.opportunities||0).toLocaleString());
+    h('fn2',evts.filter(e=>e.kind==='submitted').length.toLocaleString());
+    h('fn3',evts.filter(e=>e.kind==='confirmed').length.toLocaleString());
+    h('fn4',(d.revert_count||0).toLocaleString());
+    $('funnelUpdated').textContent=new Date().toLocaleTimeString()+' 刷新';
+
+    const tradeKinds=new Set(['submitted','confirmed','reverted']);
+    const txMap=new Map();
+    evts.filter(e=>tradeKinds.has(e.kind)&&e.tx_hash).forEach(e=>{
+      const prev=txMap.get(e.tx_hash);
+      if(!prev||e.ts>prev.ts)txMap.set(e.tx_hash,e);
+    });
+
+    S.trades=[...txMap.values()].sort((a,b)=>b.ts-a.ts).map(e=>{
+      const dt=new Date(e.ts);const tStr=dt.toLocaleTimeString();
+      const status=e.kind==='confirmed'?'ok':e.kind==='reverted'?'err':'pending';
+      const gasCost=e.gas_cost_usd&&e.gas_cost_usd>0?`$${e.gas_cost_usd.toFixed(4)}`:'--';
+      return{time:tStr,pair:e.pair||'--',profit:e.profit_usd?e.profit_usd.toFixed(2):'0',gas:gasCost,status,tx:e.tx_hash||'\u2014'};
+    });
+
+    renderTrades();
+    renderBestOpp(d.pairs||[]);
+    renderArbPairs();
+    renderSpreadChart();
+    renderHeatmap();
+    renderArbEvents();
+  }catch{}
+}
 pollArb();setInterval(pollArb,1500);
 
-async function pollChain(){try{const r=await fetch('/api/chain');if(!r.ok)return;S.chain=await r.json();
-  if(S.chain.eth_price_usd)window._ethPrice=S.chain.eth_price_usd;
-  const near=S.chain.near_liquidation||[],mkt=S.chain.market_liquidations||[],bots=S.chain.competitors||[];
-  $('aaveDanger')&&($('aaveDanger').textContent=near.length);
-  renderNear();renderBots();renderMkt();
-}catch{}}
+async function pollChain(){
+  try{
+    const r=await fetch('/api/chain');if(!r.ok)return;S.chain=await r.json();
+    if(S.chain.eth_price_usd){window._ethPrice=S.chain.eth_price_usd;$('ethPriceNav').textContent=`ETH $${S.chain.eth_price_usd.toFixed(0)}`}
+    renderNear();
+  }catch{}
+}
 pollChain();setInterval(pollChain,10000);
+
+// Initial renders
+renderTrades();renderNear();
 </script>
 </body>
 </html>

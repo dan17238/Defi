@@ -36,6 +36,10 @@ pub struct ArbitrageDetector {
 }
 
 impl ArbitrageDetector {
+    pub fn gas_margin_bps(&self) -> f64 {
+        self.gas_margin_bps
+    }
+
     pub fn new(pairs: Vec<PoolPair>, gas_margin_bps: f64) -> Self {
         Self {
             pairs,

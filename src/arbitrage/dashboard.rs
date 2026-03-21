@@ -16,6 +16,8 @@ struct Inner {
     spread_history: Mutex<Vec<SpreadPoint>>,
     scan_count: AtomicU64,
     opportunity_count: AtomicU64,
+    revert_count: AtomicU64,
+    revert_gas_cost_usd_micros: AtomicU64,
 }
 
 const MAX_EVENTS: usize = 200;
@@ -46,6 +48,7 @@ pub struct ArbEvent {
     pub spread_bps: f64,
     pub profit_usd: f64,
     pub gas_used: u64,
+    pub gas_cost_usd: f64,
     pub tx_hash: String,
     pub latency_ms: u64,
 }
@@ -66,6 +69,8 @@ impl ArbDashboard {
                 spread_history: Mutex::new(Vec::new()),
                 scan_count: AtomicU64::new(0),
                 opportunity_count: AtomicU64::new(0),
+                revert_count: AtomicU64::new(0),
+                revert_gas_cost_usd_micros: AtomicU64::new(0),
             }),
         }
     }
@@ -95,6 +100,7 @@ impl ArbDashboard {
             spread_bps,
             profit_usd,
             gas_used: 0,
+            gas_cost_usd: 0.0,
             tx_hash: String::new(),
             latency_ms: 0,
         });
@@ -112,6 +118,7 @@ impl ArbDashboard {
             spread_bps: 0.0,
             profit_usd,
             gas_used,
+            gas_cost_usd: 0.0,
             tx_hash: String::new(),
             latency_ms: 0,
         });
@@ -125,12 +132,20 @@ impl ArbDashboard {
             spread_bps: 0.0,
             profit_usd,
             gas_used: 0,
+            gas_cost_usd: 0.0,
             tx_hash: tx_hash.to_string(),
             latency_ms,
         });
     }
 
-    pub fn record_confirmed(&self, pair: &str, profit_usd: f64, tx_hash: &str, gas_used: u64) {
+    pub fn record_confirmed(
+        &self,
+        pair: &str,
+        profit_usd: f64,
+        tx_hash: &str,
+        gas_used: u64,
+        gas_cost_usd: f64,
+    ) {
         self.push_event(ArbEvent {
             ts: Self::now_ms(),
             pair: pair.to_string(),
@@ -138,12 +153,18 @@ impl ArbDashboard {
             spread_bps: 0.0,
             profit_usd,
             gas_used,
+            gas_cost_usd,
             tx_hash: tx_hash.to_string(),
             latency_ms: 0,
         });
     }
 
-    pub fn record_reverted(&self, pair: &str, tx_hash: &str, gas_used: u64) {
+    pub fn record_reverted(&self, pair: &str, tx_hash: &str, gas_used: u64, gas_cost_usd: f64) {
+        self.inner.revert_count.fetch_add(1, Ordering::Relaxed);
+        let micros = (gas_cost_usd * 1_000_000.0).round().max(0.0) as u64;
+        self.inner
+            .revert_gas_cost_usd_micros
+            .fetch_add(micros, Ordering::Relaxed);
         self.push_event(ArbEvent {
             ts: Self::now_ms(),
             pair: pair.to_string(),
@@ -151,6 +172,7 @@ impl ArbDashboard {
             spread_bps: 0.0,
             profit_usd: 0.0,
             gas_used,
+            gas_cost_usd,
             tx_hash: tx_hash.to_string(),
             latency_ms: 0,
         });
@@ -206,6 +228,8 @@ impl ArbDashboard {
         serde_json::json!({
             "scans": self.inner.scan_count.load(Ordering::Relaxed),
             "opportunities": self.inner.opportunity_count.load(Ordering::Relaxed),
+            "revert_count": self.inner.revert_count.load(Ordering::Relaxed),
+            "revert_gas_cost_usd": self.inner.revert_gas_cost_usd_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             "pairs": pairs,
             "events": events,
             "spread_history": spread_history,
