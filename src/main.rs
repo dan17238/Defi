@@ -448,17 +448,21 @@ async fn main() -> Result<()> {
             _ = status_interval.tick() => {
                 if let Some(ref tg) = telegram {
                     let arb_json = arb_dashboard.to_json();
-                    let pairs = arb_json["pairs"].as_array();
-                    let (best_name, best_spread, best_threshold) = pairs
-                        .and_then(|ps| ps.iter()
-                            .max_by(|a, b| a["spread_bps"].as_f64().unwrap_or(0.0)
-                                .partial_cmp(&b["spread_bps"].as_f64().unwrap_or(0.0))
-                                .unwrap_or(std::cmp::Ordering::Equal)))
-                        .map(|p| (
+                    let pairs_arr = arb_json["pairs"].as_array();
+
+                    // Top 5 pairs by spread
+                    let mut top_pairs: Vec<(String, f64, f64)> = pairs_arr
+                        .map(|ps| ps.iter().map(|p| (
                             p["name"].as_str().unwrap_or("--").to_string(),
                             p["spread_bps"].as_f64().unwrap_or(0.0),
                             p["fee_threshold_bps"].as_f64().unwrap_or(0.0),
-                        ))
+                        )).collect())
+                        .unwrap_or_default();
+                    top_pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+                    let (best_name, best_spread, best_threshold) = top_pairs
+                        .first()
+                        .cloned()
                         .unwrap_or(("--".to_string(), 0.0, 0.0));
 
                     let uptime_secs = metrics.uptime_secs();
@@ -474,11 +478,16 @@ async fn main() -> Result<()> {
                         metrics.arb_count(),
                         metrics.arb_successful_count(),
                         metrics.arb_profit_usd(),
+                        metrics.total_profit_usd(),
+                        arb_json["revert_count"].as_u64().unwrap_or(0),
+                        arb_json["revert_gas_cost_usd"].as_f64().unwrap_or(0.0),
                         metrics.positions_scanned(),
                         metrics.error_count(),
+                        arb_json["scan_latency_ms"].as_f64().unwrap_or(0.0),
                         &best_name,
                         best_spread,
                         best_threshold,
+                        &top_pairs,
                     );
                 }
             }

@@ -71,7 +71,14 @@ impl Telegram {
     /// Convenience: startup notification
     pub fn startup(&self, pairs: usize, routes: usize) {
         self.notify(format!(
-            "\u{1F680} *MEV Bot 启动*\n池对: {}\n路由: {}\n模式: 运行中",
+            "\u{1F680} *MEV Bot 启动*\n\
+            \n\
+            套利: {} 池对 + {} 路由\n\
+            链: Arbitrum One\n\
+            合约: 已部署\n\
+            清算: AAVE V3 + Radiant\n\
+            \n\
+            扫描开始...",
             pairs, routes
         ));
     }
@@ -85,20 +92,68 @@ impl Telegram {
         arb_attempts: u64,
         arb_successes: u64,
         arb_profit_usd: f64,
+        liq_profit_usd: f64,
+        reverts: u64,
+        revert_gas_usd: f64,
         positions: u64,
         errors: u64,
+        scan_latency_ms: f64,
         best_pair: &str,
         best_spread: f64,
         best_threshold: f64,
+        top_pairs: &[(String, f64, f64)], // [(name, spread, threshold)]
     ) {
-        let pnl_icon = if arb_profit_usd > 0.0 { "\u{1F4B0}" } else { "\u{1F4CA}" };
+        let total_pnl = arb_profit_usd + liq_profit_usd;
+        let pnl_icon = if total_pnl > 0.0 { "\u{1F4B0}" } else { "\u{1F4CA}" };
+        let pnl_sign = if total_pnl >= 0.0 { "+" } else { "" };
+
+        let mut top_str = String::new();
+        for (name, spread, threshold) in top_pairs.iter().take(5) {
+            let pct = spread / threshold.max(0.1) * 100.0;
+            top_str.push_str(&format!(
+                "  `{:.1}/{:.0}` bps ({:.0}%) {}\n",
+                spread, threshold, pct, name
+            ));
+        }
+        if top_str.is_empty() {
+            top_str = "  无活跃价差\n".to_string();
+        }
+
         self.notify(format!(
-            "{} *MEV Bot 状态*\n运行: {} | Scans: {}\nPnL: *${:.2}* | 交易: {}/{}\n最佳价差: `{}` {:.1}/{:.1} bps\n借款人: {} | 错误: {}",
-            pnl_icon, uptime, scans,
-            arb_profit_usd, arb_successes, arb_attempts,
-            best_pair, best_spread, best_threshold,
-            positions, errors
+            "{} *MEV Bot 状态报告*\n\
+            \n\
+            *运行* {} | 延迟 {:.1}ms\n\
+            \n\
+            *PnL: {}${:.2}*\n\
+            套利利润: ${:.2}\n\
+            清算利润: ${:.2}\n\
+            Gas 消耗: -${:.3} ({} 次 revert)\n\
+            \n\
+            *套利*\n\
+            扫描: {} | 机会: {}\n\
+            交易: {} 发送 / {} 成功\n\
+            \n\
+            *Top 5 价差*\n\
+            {}\
+            *清算*\n\
+            监控仓位: {} | 错误: {}",
+            pnl_icon,
+            uptime, scan_latency_ms,
+            pnl_sign, total_pnl,
+            arb_profit_usd,
+            liq_profit_usd,
+            revert_gas_usd, reverts,
+            Self::fmt_num(scans), opportunities,
+            arb_attempts, arb_successes,
+            top_str,
+            positions, errors,
         ));
+    }
+
+    fn fmt_num(n: u64) -> String {
+        if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
+        else if n >= 1_000 { format!("{:.1}K", n as f64 / 1_000.0) }
+        else { n.to_string() }
     }
 }
 
