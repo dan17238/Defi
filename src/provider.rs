@@ -122,6 +122,11 @@ pub async fn get_latest_block_number<P: Provider>(provider: &P) -> Result<u64> {
 ///
 /// Uses binary search over `eth_getCode` so protocol discovery can backfill from
 /// the pool's real deployment block without hard-coding chain-specific ranges.
+/// Scan window for borrower discovery when archive state is unavailable.
+/// ~500K blocks ≈ 1.5 days on Arbitrum (250ms blocks). Covers all
+/// active borrowers without requiring an archive node.
+const DISCOVERY_FALLBACK_BLOCKS: u64 = 500_000;
+
 pub async fn find_contract_deployment_block<P: Provider>(
     provider: &P,
     contract: Address,
@@ -136,19 +141,34 @@ pub async fn find_contract_deployment_block<P: Provider>(
         eyre::bail!("No code found for contract {contract} at latest block");
     }
 
+    // Binary search for exact deployment block. Falls back to a recent
+    // window if the node doesn't support historical state (non-archive).
     let mut low = 0u64;
     let mut high = latest;
     while low < high {
         let mid = low + (high - low) / 2;
-        let code = provider
+        match provider
             .get_code_at(contract)
             .block_id(mid.into())
             .await
-            .wrap_err("Failed to fetch historical contract code")?;
-        if code.is_empty() {
-            low = mid + 1;
-        } else {
-            high = mid;
+        {
+            Ok(code) => {
+                if code.is_empty() {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            Err(_) => {
+                // Node can't serve historical state — fall back to recent window.
+                let fallback = latest.saturating_sub(DISCOVERY_FALLBACK_BLOCKS);
+                tracing::warn!(
+                    contract = %contract,
+                    fallback_block = fallback,
+                    "Archive state unavailable, using recent block window for discovery"
+                );
+                return Ok(fallback);
+            }
         }
     }
 
