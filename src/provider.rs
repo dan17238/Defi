@@ -10,14 +10,12 @@ use tracing::info;
 #[cfg(unix)]
 use alloy::providers::IpcConnect;
 
-/// Concrete type for a signed HTTP provider (with wallet filler).
-/// This is the type returned by `ProviderBuilder::new().wallet(w).connect_http(url)`.
+/// Lean signed provider: only NonceFiller + WalletFiller.
+/// No GasFiller/BlobGasFiller/ChainIdFiller — we set gas_limit, gas_price,
+/// and chain_id explicitly on every TransactionRequest to avoid extra RPC calls.
 pub type SignedHttpProvider = FillProvider<
     JoinFill<
-        JoinFill<
-            alloy::providers::Identity,
-            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-        >,
+        JoinFill<alloy::providers::Identity, NonceFiller>,
         WalletFiller<EthereumWallet>,
     >,
     RootProvider,
@@ -62,11 +60,14 @@ pub fn create_signed_http_provider(
     http_url: &str,
     wallet: EthereumWallet,
 ) -> Result<SignedHttpProvider> {
-    info!(url = http_url, "Creating signed HTTP provider");
+    info!(url = http_url, "Creating signed HTTP provider (lean: nonce + wallet only)");
     let url = http_url
         .parse()
         .wrap_err("Invalid HTTP RPC URL for signed provider")?;
-    let provider = ProviderBuilder::new().wallet(wallet).connect_http(url);
+    let provider = ProviderBuilder::default()
+        .filler(NonceFiller::default())
+        .filler(WalletFiller::new(wallet))
+        .connect_http(url);
     Ok(provider)
 }
 

@@ -101,11 +101,12 @@ impl<P: Provider + Clone + Send + Sync + 'static> Executor<P> {
         );
 
         // Build the transaction request
-        let tx_request = alloy::rpc::types::TransactionRequest::default()
+        let mut tx_request = alloy::rpc::types::TransactionRequest::default()
             .to(to)
             .input(alloy::rpc::types::TransactionInput::new(calldata))
             .gas_limit(6_000_000)
             .gas_price(gas_price);
+        tx_request.chain_id = Some(42161);
 
         // Send the signed transaction via the provider (which has a wallet attached
         // and points to the sequencer RPC for lowest latency).
