@@ -10,12 +10,13 @@ use tracing::info;
 #[cfg(unix)]
 use alloy::providers::IpcConnect;
 
-/// Lean signed provider: only NonceFiller + WalletFiller.
-/// No GasFiller/BlobGasFiller/ChainIdFiller — we set gas_limit, gas_price,
-/// and chain_id explicitly on every TransactionRequest to avoid extra RPC calls.
+/// Signed HTTP provider with full filler chain.
 pub type SignedHttpProvider = FillProvider<
     JoinFill<
-        JoinFill<alloy::providers::Identity, NonceFiller>,
+        JoinFill<
+            alloy::providers::Identity,
+            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        >,
         WalletFiller<EthereumWallet>,
     >,
     RootProvider,
@@ -64,10 +65,7 @@ pub fn create_signed_http_provider(
     let url = http_url
         .parse()
         .wrap_err("Invalid HTTP RPC URL for signed provider")?;
-    let provider = ProviderBuilder::default()
-        .filler(NonceFiller::default())
-        .filler(WalletFiller::new(wallet))
-        .connect_http(url);
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(url);
     Ok(provider)
 }
 

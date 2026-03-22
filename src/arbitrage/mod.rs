@@ -890,12 +890,11 @@ where
     ) -> Result<FixedBytes<32>> {
         let gas_price_wei = (gas_price_gwei * 1e9).round() as u128;
 
-        let mut tx_request = TransactionRequest::default()
+        let tx_request = TransactionRequest::default()
             .to(self.flash_arb_contract)
             .input(TransactionInput::new(calldata))
             .gas_limit(3_000_000)
             .gas_price(gas_price_wei);
-        tx_request.chain_id = Some(42161);
 
         let send_start = Instant::now();
 
