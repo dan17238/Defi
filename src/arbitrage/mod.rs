@@ -904,11 +904,13 @@ where
             .await
             .wrap_err("Failed to send arbitrage transaction")?;
 
+        let fill_done = send_start.elapsed();
         let tx_hash = *pending.tx_hash();
         let latency = send_start.elapsed();
 
         info!(
             tx = %tx_hash,
+            fill_ms = fill_done.as_millis() as u64,
             latency_ms = latency.as_millis() as u64,
             gas_gwei = gas_price_gwei,
             "Arb tx submitted"
