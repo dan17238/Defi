@@ -126,8 +126,10 @@ async fn main() -> Result<()> {
         provider::create_best_read_provider(&config.rpc.http_url, config.rpc.ipc_path.as_deref())
             .await?;
 
-    // Execution provider (signed with wallet, points to sequencer for lowest latency)
-    let exec_provider = provider::create_signed_http_provider(&config.sequencer.rpc_url, wallet)?;
+    // Execution provider (signed with wallet, uses local node which supports all
+    // RPC methods and forwards eth_sendRawTransaction to the sequencer automatically).
+    // Direct sequencer endpoint only supports sendRawTransaction, breaking NonceFiller.
+    let exec_provider = provider::create_signed_http_provider(&config.rpc.http_url, wallet)?;
 
     let block_number = provider::get_latest_block_number(&read_provider).await?;
     info!(block_number, "Connected to Arbitrum");
