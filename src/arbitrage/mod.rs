@@ -902,6 +902,10 @@ where
             .exec_provider
             .send_transaction(tx_request)
             .await
+            .map_err(|e| {
+                error!(error = ?e, "send_transaction raw error");
+                e
+            })
             .wrap_err("Failed to send arbitrage transaction")?;
 
         let fill_done = send_start.elapsed();
